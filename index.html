@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Curve Extractor v0.7 — 5 Main Branches</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0d0d0d;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    padding: 20px 32px;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border-bottom: 1px solid #333;
+  }
+  header h1 { font-size: 22px; font-weight: 600; color: #ffd700; }
+  header p { font-size: 13px; color: #888; margin-top: 4px; }
+  .main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+  .sidebar {
+    width: 260px;
+    background: #141414;
+    border-right: 1px solid #2a2a2a;
+    padding: 20px;
+    overflow-y: auto;
+  }
+  .sidebar h2 {
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #888;
+    margin-bottom: 16px;
+  }
+  .curve-item {
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.2s;
+    user-select: none;
+  }
+  .curve-item:hover { background: #1e1e1e; }
+  .curve-item.active { background: #222; }
+  .curve-color {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    margin-right: 10px;
+    flex-shrink: 0;
+  }
+  .curve-info { flex: 1; }
+  .curve-name { font-size: 13px; font-weight: 500; }
+  .curve-meta { font-size: 11px; color: #666; margin-top: 2px; }
+  .toggle-btn {
+    width: 32px;
+    height: 18px;
+    border-radius: 9px;
+    background: #444;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .toggle-btn.on { background: #4caf50; }
+  .toggle-btn::after {
+    content: '';
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: white;
+    top: 2px;
+    left: 2px;
+    transition: left 0.2s;
+  }
+  .toggle-btn.on::after { left: 16px; }
+  .canvas-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background: #000;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  .controls {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    display: flex;
+    gap: 8px;
+    z-index: 10;
+  }
+  .ctrl-btn {
+    background: rgba(30,30,30,0.9);
+    border: 1px solid #444;
+    color: #ccc;
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s;
+  }
+  .ctrl-btn:hover { background: #333; border-color: #666; }
+  .tooltip {
+    position: absolute;
+    background: rgba(20,20,20,0.95);
+    border: 1px solid #555;
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 12px;
+    pointer-events: none;
+    z-index: 20;
+    display: none;
+    min-width: 160px;
+  }
+  .tooltip h3 { color: #ffd700; font-size: 13px; margin-bottom: 6px; }
+  .tooltip p { color: #aaa; line-height: 1.6; }
+  .stats {
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid #2a2a2a;
+  }
+  .stats h2 { margin-bottom: 12px; }
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    padding: 4px 0;
+    color: #888;
+  }
+  .stat-row span:last-child { color: #ccc; font-family: monospace; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Curve Extractor v0.7 — 5 Main Branches</h1>
+  <p>多源 BFS 最短路径 + 端点角度聚类 → B样条平滑 · 点击曲线查看详情 · 滚轮缩放 · 拖拽平移</p>
+</header>
+<div class="main">
+  <div class="sidebar">
+    <h2>Curves</h2>
+    <div id="curve-list"></div>
+    <div class="stats">
+      <h2>Stats</h2>
+      <div class="stat-row"><span>Image Size</span><span>1672 × 941</span></div>
+      <div class="stat-row"><span>Total Curves</span><span>5</span></div>
+      <div class="stat-row"><span>Points/Curve</span><span>800</span></div>
+      <div class="stat-row"><span>Smoothing</span><span>B-Spline s=150</span></div>
+    </div>
+  </div>
+  <div class="canvas-wrap" id="canvasWrap">
+    <canvas id="canvas"></canvas>
+    <div class="controls">
+      <button class="ctrl-btn" onclick="resetView()">Reset View</button>
+      <button class="ctrl-btn" onclick="toggleAll(true)">Show All</button>
+      <button class="ctrl-btn" onclick="toggleAll(false)">Hide All</button>
+    </div>
+    <div class="tooltip" id="tooltip"></div>
+  </div>
+</div>
+
+<script>
+// 曲线数据（从 JSON 提取的平滑点，格式 [x, y]）
+// 这里嵌入精简版数据，完整数据见 curves_5branches.json
+const CURVES = [
+  { key: "right_lower",  name: "右下卷曲枝", color: "#FF6B6B", visible: true, points: [] },
+  { key: "right_upper",  name: "右上大枝",   color: "#4ECDC4", visible: true, points: [] },
+  { key: "center_top",   name: "中间主干",   color: "#45B7D1", visible: true, points: [] },
+  { key: "left_upper",   name: "左上大枝",   color: "#FFA07A", visible: true, points: [] },
+  { key: "left_lower",   name: "左下卷曲枝", color: "#98D8C8", visible: true, points: [] },
+];
+
+// 尝试加载外部 JSON，如果失败则使用 SVG 路径
+async function loadCurves() {
+  try {
+    const resp = await fetch('output/v0.7/curves_5branches.json');
+    if (resp.ok) {
+      const data = await resp.json();
+      data.curves.forEach((c, i) => {
+        if (CURVES[i]) CURVES[i].points = c.points;
+      });
+      return true;
+    }
+  } catch(e) {}
+  return false;
+}
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const wrap = document.getElementById('canvasWrap');
+const tooltip = document.getElementById('tooltip');
+
+let scale = 1, offsetX = 0, offsetY = 0;
+let isDragging = false, dragStartX = 0, dragStartY = 0;
+let hoveredCurve = null;
+const IMG_W = 1672, IMG_H = 941;
+
+function resize() {
+  canvas.width = wrap.clientWidth;
+  canvas.height = wrap.clientHeight;
+  fitToScreen();
+  draw();
+}
+
+function fitToScreen() {
+  const sx = canvas.width / IMG_W;
+  const sy = canvas.height / IMG_H;
+  scale = Math.min(sx, sy) * 0.9;
+  offsetX = (canvas.width - IMG_W * scale) / 2;
+  offsetY = (canvas.height - IMG_H * scale) / 2;
+}
+
+function resetView() { fitToScreen(); draw(); }
+
+function worldToScreen(wx, wy) {
+  return [wx * scale + offsetX, wy * scale + offsetY];
+}
+
+function screenToWorld(sx, sy) {
+  return [(sx - offsetX) / scale, (sy - offsetY) / scale];
+}
+
+function draw() {
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // 网格
+  ctx.strokeStyle = '#111';
+  ctx.lineWidth = 1;
+  const gs = 100 * scale;
+  for (let x = offsetX % gs; x < canvas.width; x += gs) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+  }
+  for (let y = offsetY % gs; y < canvas.height; y += gs) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+  }
+
+  // 曲线
+  CURVES.forEach((c, idx) => {
+    if (!c.visible || c.points.length < 2) return;
+    const isHovered = hoveredCurve === idx;
+    ctx.beginPath();
+    const [sx, sy] = worldToScreen(c.points[0][0], c.points[0][1]);
+    ctx.moveTo(sx, sy);
+    for (let i = 1; i < c.points.length; i++) {
+      const [px, py] = worldToScreen(c.points[i][0], c.points[i][1]);
+      ctx.lineTo(px, py);
+    }
+    ctx.strokeStyle = c.color;
+    ctx.lineWidth = isHovered ? 4 : 2.5;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.globalAlpha = isHovered ? 1 : 0.85;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // 端点标记
+    const [ex, ey] = worldToScreen(c.points[0][0], c.points[0][1]);
+    ctx.beginPath();
+    ctx.arc(ex, ey, isHovered ? 6 : 4, 0, Math.PI * 2);
+    ctx.fillStyle = c.color;
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  });
+}
+
+function buildSidebar() {
+  const list = document.getElementById('curve-list');
+  list.innerHTML = '';
+  CURVES.forEach((c, i) => {
+    const item = document.createElement('div');
+    item.className = 'curve-item' + (c.visible ? ' active' : '');
+    item.innerHTML = `
+      <div class="curve-color" style="background:${c.color}"></div>
+      <div class="curve-info">
+        <div class="curve-name">${c.name}</div>
+        <div class="curve-meta">${c.points.length} pts · ${c.key}</div>
+      </div>
+      <div class="toggle-btn ${c.visible ? 'on' : ''}" data-idx="${i}"></div>
+    `;
+    item.querySelector('.toggle-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      c.visible = !c.visible;
+      item.classList.toggle('active', c.visible);
+      e.target.classList.toggle('on', c.visible);
+      draw();
+    });
+    list.appendChild(item);
+  });
+}
+
+function toggleAll(show) {
+  CURVES.forEach(c => c.visible = show);
+  buildSidebar();
+  draw();
+}
+
+// 命中检测
+function hitTest(mx, my) {
+  const [wx, wy] = screenToWorld(mx, my);
+  const threshold = 8 / scale;
+  let bestIdx = -1, bestDist = threshold;
+  CURVES.forEach((c, idx) => {
+    if (!c.visible) return;
+    for (let i = 0; i < c.points.length; i += 3) {
+      const dx = c.points[i][0] - wx;
+      const dy = c.points[i][1] - wy;
+      const d = Math.sqrt(dx*dx + dy*dy);
+      if (d < bestDist) { bestDist = d; bestIdx = idx; }
+    }
+  });
+  return bestIdx;
+}
+
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  if (isDragging) {
+    offsetX += mx - dragStartX;
+    offsetY += my - dragStartY;
+    dragStartX = mx;
+    dragStartY = my;
+    draw();
+    return;
+  }
+
+  const idx = hitTest(mx, my);
+  hoveredCurve = idx >= 0 ? idx : null;
+  canvas.style.cursor = hoveredCurve !== null ? 'pointer' : 'grab';
+
+  if (hoveredCurve !== null) {
+    const c = CURVES[hoveredCurve];
+    tooltip.style.display = 'block';
+    tooltip.style.left = (mx + 16) + 'px';
+    tooltip.style.top = (my + 16) + 'px';
+    tooltip.innerHTML = `
+      <h3 style="color:${c.color}">${c.name}</h3>
+      <p>Key: ${c.key}<br>Points: ${c.points.length}<br>Click canvas to drag, scroll to zoom</p>
+    `;
+  } else {
+    tooltip.style.display = 'none';
+  }
+  draw();
+});
+
+canvas.addEventListener('mousedown', (e) => {
+  isDragging = true;
+  const rect = canvas.getBoundingClientRect();
+  dragStartX = e.clientX - rect.left;
+  dragStartY = e.clientY - rect.top;
+  canvas.style.cursor = 'grabbing';
+});
+
+canvas.addEventListener('mouseup', () => { isDragging = false; canvas.style.cursor = 'grab'; });
+canvas.addEventListener('mouseleave', () => { isDragging = false; tooltip.style.display = 'none'; hoveredCurve = null; draw(); });
+
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const [wx, wy] = screenToWorld(mx, my);
+  const factor = e.deltaY > 0 ? 0.9 : 1.1;
+  scale *= factor;
+  const [nsx, nsy] = worldToScreen(wx, wy);
+  offsetX += mx - nsx;
+  offsetY += my - nsy;
+  draw();
+}, { passive: false });
+
+window.addEventListener('resize', resize);
+
+// 初始化
+loadCurves().then(() => {
+  buildSidebar();
+  resize();
+});
+</script>
+</body>
+</html>
