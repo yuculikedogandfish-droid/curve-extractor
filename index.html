@@ -183,7 +183,7 @@ const CURVES = [
 // 尝试加载外部 JSON，如果失败则使用 SVG 路径
 async function loadCurves() {
   try {
-    const resp = await fetch('output/v0.7/curves_5branches.json');
+    const resp = await fetch('output/v0.8/curves_5branches.json');
     if (resp.ok) {
       const data = await resp.json();
       data.curves.forEach((c, i) => {
