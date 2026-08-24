@@ -1,0 +1,1682 @@
+{
+  "type": "UE_SplineData",
+  "curve_count": 5,
+  "world_scale": 0.1,
+  "curves": [
+    {
+      "key": "right_lower",
+      "name": "右下卷曲枝",
+      "spline_points": [
+        {
+          "location": [
+            163.4,
+            -59.3,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            161.605,
+            -60.652,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            159.872,
+            -61.046,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            158.156,
+            -60.822,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            156.415,
+            -60.322,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            154.603,
+            -59.888,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            152.678,
+            -59.852,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            150.661,
+            -60.274,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            148.649,
+            -60.877,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            146.743,
+            -61.361,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            145.045,
+            -61.428,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            143.658,
+            -60.779,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            142.567,
+            -59.36,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            141.423,
+            -57.815,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            139.896,
+            -56.794,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            138.127,
+            -56.163,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            136.455,
+            -55.467,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            135.096,
+            -54.403,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            133.961,
+            -53.046,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            132.914,
+            -51.526,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            131.821,
+            -49.975,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            130.544,
+            -48.525,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            128.948,
+            -47.309,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            126.994,
+            -46.441,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            124.941,
+            -45.987,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            123.107,
+            -46.004,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            121.808,
+            -46.546,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            121.245,
+            -47.628,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            121.347,
+            -49.165,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            122.01,
+            -51.06,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            123.125,
+            -53.215,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            124.587,
+            -55.534,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            126.289,
+            -57.917,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            128.125,
+            -60.269,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            129.988,
+            -62.492,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            131.772,
+            -64.487,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            133.37,
+            -66.159,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            134.675,
+            -67.408,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            135.582,
+            -68.138,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            135.984,
+            -68.252,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            135.8,
+            -67.7,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        }
+      ],
+      "point_count": 41
+    },
+    {
+      "key": "right_upper",
+      "name": "右上大枝",
+      "spline_points": [
+        {
+          "location": [
+            109.6,
+            -20.5,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            107.855,
+            -19.879,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            106.031,
+            -19.516,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            104.166,
+            -19.417,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            102.301,
+            -19.588,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            100.474,
+            -20.035,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            98.728,
+            -20.766,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            97.218,
+            -21.861,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            96.197,
+            -23.457,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            95.473,
+            -25.227,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            94.474,
+            -26.459,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            92.959,
+            -26.909,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            91.065,
+            -26.859,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            88.948,
+            -26.618,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            86.767,
+            -26.498,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            84.664,
+            -26.755,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            82.723,
+            -27.408,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            81.011,
+            -28.412,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            79.593,
+            -29.72,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            78.538,
+            -31.289,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            77.912,
+            -33.071,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            77.655,
+            -34.987,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            77.433,
+            -36.878,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            76.873,
+            -38.575,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.696,
+            -39.958,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            74.526,
+            -41.376,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            73.996,
+            -43.131,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            74.049,
+            -45.088,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            74.575,
+            -47.082,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.463,
+            -48.946,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            76.595,
+            -50.528,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            77.491,
+            -52.121,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            77.564,
+            -54.059,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            76.759,
+            -55.831,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.371,
+            -57.101,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            74.778,
+            -58.597,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.07,
+            -60.478,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.683,
+            -62.539,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            76.048,
+            -64.575,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.599,
+            -66.382,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            73.9,
+            -67.7,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        }
+      ],
+      "point_count": 41
+    },
+    {
+      "key": "center_top",
+      "name": "中间主干",
+      "spline_points": [
+        {
+          "location": [
+            84.3,
+            -22.0,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            83.982,
+            -22.298,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            83.187,
+            -22.931,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            82.093,
+            -23.829,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            80.877,
+            -24.924,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            79.717,
+            -26.145,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            78.79,
+            -27.424,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            78.275,
+            -28.69,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            78.348,
+            -29.876,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            79.039,
+            -30.936,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            79.609,
+            -31.963,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            79.691,
+            -33.018,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            79.377,
+            -34.102,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            78.763,
+            -35.217,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            77.95,
+            -36.366,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            77.037,
+            -37.549,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            76.122,
+            -38.768,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.303,
+            -40.026,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            74.68,
+            -41.324,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            74.3,
+            -42.652,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            74.151,
+            -43.991,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            74.214,
+            -45.318,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            74.472,
+            -46.612,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            74.907,
+            -47.851,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.501,
+            -49.013,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            76.236,
+            -50.076,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            77.01,
+            -51.088,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            77.527,
+            -52.252,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            77.631,
+            -53.582,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            77.319,
+            -54.898,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            76.595,
+            -56.013,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.613,
+            -56.87,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            74.93,
+            -57.786,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            74.782,
+            -58.92,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.002,
+            -60.218,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.407,
+            -61.613,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.815,
+            -63.039,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            76.042,
+            -64.431,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.906,
+            -65.722,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.222,
+            -66.846,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            73.9,
+            -67.7,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        }
+      ],
+      "point_count": 41
+    },
+    {
+      "key": "left_upper",
+      "name": "左上大枝",
+      "spline_points": [
+        {
+          "location": [
+            33.3,
+            -31.0,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            34.812,
+            -31.046,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            36.511,
+            -31.015,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            38.343,
+            -30.963,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            40.255,
+            -30.944,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            42.194,
+            -31.012,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            44.107,
+            -31.221,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            45.939,
+            -31.627,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            47.639,
+            -32.283,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            49.153,
+            -33.244,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            50.427,
+            -34.565,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            51.564,
+            -36.031,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            53.077,
+            -36.728,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            54.916,
+            -36.913,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            56.42,
+            -37.981,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            56.442,
+            -39.44,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            54.818,
+            -40.342,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            52.903,
+            -41.33,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            51.616,
+            -42.782,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            50.987,
+            -44.481,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            50.956,
+            -46.156,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            51.456,
+            -47.665,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            52.407,
+            -49.009,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            53.731,
+            -50.2,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            55.35,
+            -51.248,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            57.184,
+            -52.161,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            59.155,
+            -52.95,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            61.185,
+            -53.625,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            63.194,
+            -54.196,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            65.105,
+            -54.673,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            66.878,
+            -55.089,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            68.577,
+            -55.538,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            70.273,
+            -56.122,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            71.933,
+            -56.913,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            73.424,
+            -57.956,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            74.607,
+            -59.296,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.379,
+            -60.925,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.708,
+            -62.723,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.573,
+            -64.553,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            74.955,
+            -66.279,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            73.9,
+            -67.7,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        }
+      ],
+      "point_count": 41
+    },
+    {
+      "key": "left_lower",
+      "name": "左下卷曲枝",
+      "spline_points": [
+        {
+          "location": [
+            6.3,
+            -50.7,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            7.881,
+            -52.094,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            9.627,
+            -53.415,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            11.513,
+            -54.622,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            13.513,
+            -55.675,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            15.6,
+            -56.532,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            17.751,
+            -57.151,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            19.938,
+            -57.491,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            22.137,
+            -57.511,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            24.321,
+            -57.171,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            26.42,
+            -56.42,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            28.211,
+            -55.187,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            29.536,
+            -53.466,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            30.69,
+            -51.592,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            32.087,
+            -49.986,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            33.842,
+            -48.767,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            35.843,
+            -47.823,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            37.973,
+            -47.035,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            40.112,
+            -46.288,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            42.19,
+            -45.532,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            44.26,
+            -44.896,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            46.394,
+            -44.539,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            48.594,
+            -44.569,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            50.737,
+            -45.012,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            52.721,
+            -45.859,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            54.561,
+            -47.025,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            56.305,
+            -48.401,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            57.999,
+            -49.883,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            59.688,
+            -51.363,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            61.418,
+            -52.736,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            63.236,
+            -53.894,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            65.187,
+            -54.731,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            67.278,
+            -55.268,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            69.423,
+            -55.807,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            71.508,
+            -56.641,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            73.348,
+            -57.864,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            74.744,
+            -59.523,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.546,
+            -61.569,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.694,
+            -63.783,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            75.134,
+            -65.932,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        },
+        {
+          "location": [
+            73.9,
+            -67.7,
+            0.0
+          ],
+          "tangent_mode": "Auto"
+        }
+      ],
+      "point_count": 41
+    }
+  ]
+}

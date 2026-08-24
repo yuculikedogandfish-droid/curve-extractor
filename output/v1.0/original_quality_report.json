@@ -1,0 +1,113 @@
+{
+  "curve_count": 5,
+  "curves": [
+    {
+      "key": "right_lower",
+      "name": "右下卷曲枝",
+      "smoothness": {
+        "curvature_std": 0.007,
+        "max_angle_change": 11.3,
+        "avg_angle_change": 0.7544,
+        "c2_continuity": 0.9998
+      },
+      "reconstruction": {
+        "mean_error_px": 8.084,
+        "max_error_px": 21.924,
+        "rmse_px": 9.453
+      },
+      "length_accuracy": {
+        "original_length_px": 791.09,
+        "smoothed_length_px": 765.49,
+        "length_error_pct": 3.24
+      }
+    },
+    {
+      "key": "right_upper",
+      "name": "右上大枝",
+      "smoothness": {
+        "curvature_std": 0.0085,
+        "max_angle_change": 2.46,
+        "avg_angle_change": 0.7842,
+        "c2_continuity": 0.9998
+      },
+      "reconstruction": {
+        "mean_error_px": 6.777,
+        "max_error_px": 22.079,
+        "rmse_px": 8.306
+      },
+      "length_accuracy": {
+        "original_length_px": 792.85,
+        "smoothed_length_px": 769.32,
+        "length_error_pct": 2.97
+      }
+    },
+    {
+      "key": "center_top",
+      "name": "中间主干",
+      "smoothness": {
+        "curvature_std": 0.005,
+        "max_angle_change": 9.29,
+        "avg_angle_change": 0.6472,
+        "c2_continuity": 0.9999
+      },
+      "reconstruction": {
+        "mean_error_px": 6.223,
+        "max_error_px": 17.797,
+        "rmse_px": 7.781
+      },
+      "length_accuracy": {
+        "original_length_px": 547.9,
+        "smoothed_length_px": 530.26,
+        "length_error_pct": 3.22
+      }
+    },
+    {
+      "key": "left_upper",
+      "name": "左上大枝",
+      "smoothness": {
+        "curvature_std": 0.0105,
+        "max_angle_change": 4.82,
+        "avg_angle_change": 0.6685,
+        "c2_continuity": 0.9998
+      },
+      "reconstruction": {
+        "mean_error_px": 6.866,
+        "max_error_px": 27.913,
+        "rmse_px": 9.533
+      },
+      "length_accuracy": {
+        "original_length_px": 770.78,
+        "smoothed_length_px": 738.01,
+        "length_error_pct": 4.25
+      }
+    },
+    {
+      "key": "left_lower",
+      "name": "左下卷曲枝",
+      "smoothness": {
+        "curvature_std": 0.0054,
+        "max_angle_change": 1.14,
+        "avg_angle_change": 0.4474,
+        "c2_continuity": 0.9999
+      },
+      "reconstruction": {
+        "mean_error_px": 3.864,
+        "max_error_px": 13.75,
+        "rmse_px": 4.884
+      },
+      "length_accuracy": {
+        "original_length_px": 935.32,
+        "smoothed_length_px": 880.84,
+        "length_error_pct": 5.82
+      }
+    }
+  ],
+  "summary": {
+    "avg_c2_continuity": 0.9998,
+    "min_c2_continuity": 0.9998,
+    "avg_rmse_px": 7.991,
+    "max_rmse_px": 9.533,
+    "avg_length_error_pct": 3.9,
+    "overall_quality_score": 0.7216
+  }
+}

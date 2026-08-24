@@ -26,3 +26,13 @@ Thumbs.db
 output/*/preview.png
 output/*/pipeline_debug.png
 output/diagnostic/
+
+# Debug and feedback images
+input/debug_*.png
+input/feedback_*.png
+input/fb*.png
+input/*_b64.txt
+
+# Temp scripts
+convert_b64.py
+embed_image.py
