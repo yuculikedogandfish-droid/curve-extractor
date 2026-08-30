@@ -408,6 +408,9 @@
             <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
               <input type="checkbox" id="chkRefImage" checked> 参照图
             </label>
+            <button class="btn btn-sm" id="btnViewFront" style="background:#2a2a2a;color:#ffd700;padding:2px 8px;">正视</button>
+            <button class="btn btn-sm" id="btnViewSide" style="background:#2a2a2a;color:#bbb;padding:2px 8px;">侧视</button>
+            <button class="btn btn-sm" id="btnViewTop" style="background:#2a2a2a;color:#bbb;padding:2px 8px;">俯视</button>
             <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
               <input type="checkbox" id="chkShowL1" checked> <span style="color:#FFD700;">●</span> 一级
             </label>
@@ -906,6 +909,88 @@ function processTriViews() {
       S.triTopCols = null;
     }
   }
+  S.triAlign = computeTriAlign();
+  S._topZFlip = detectTopZFlip();
+  console.log('[TriAlign]', S.triAlign, 'topFlip=', S._topZFlip);
+}
+
+function maskAxisSpan(mask, w, h) {
+  let ymin = h, ymax = -1, xmin = w, xmax = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!mask[y * w + x]) continue;
+      if (y < ymin) ymin = y; if (y > ymax) ymax = y;
+      if (x < xmin) xmin = x; if (x > xmax) xmax = x;
+    }
+  }
+  if (ymax < 0) return { yminN: 0, ymaxN: 1, xminN: 0, xmaxN: 1 };
+  return {
+    yminN: ymin / Math.max(1, h - 1), ymaxN: ymax / Math.max(1, h - 1),
+    xminN: xmin / Math.max(1, w - 1), xmaxN: xmax / Math.max(1, w - 1)
+  };
+}
+
+function tableYSpanN(table) {
+  if (!table) return { yminN: 0, ymaxN: 1 };
+  let ymin = table.h, ymax = -1;
+  for (let y = 0; y < table.h; y++) {
+    if (table.rows[y] && table.rows[y].length) {
+      if (y < ymin) ymin = y; if (y > ymax) ymax = y;
+    }
+  }
+  if (ymax < 0) return { yminN: 0, ymaxN: 1 };
+  return { yminN: ymin / Math.max(1, table.h - 1), ymaxN: ymax / Math.max(1, table.h - 1) };
+}
+
+function tableXSpanN(colTable) {
+  if (!colTable) return { xminN: 0, xmaxN: 1 };
+  let xmin = colTable.w, xmax = -1;
+  for (let x = 0; x < colTable.w; x++) {
+    if (colTable.cols[x] && colTable.cols[x].length) {
+      if (x < xmin) xmin = x; if (x > xmax) xmax = x;
+    }
+  }
+  if (xmax < 0) return { xminN: 0, xmaxN: 1 };
+  return { xminN: xmin / Math.max(1, colTable.w - 1), xmaxN: xmax / Math.max(1, colTable.w - 1) };
+}
+
+function mapNorm(v, a0, a1, b0, b1) {
+  const t = (v - a0) / Math.max(1e-6, a1 - a0);
+  return b0 + Math.max(0, Math.min(1, t)) * (b1 - b0);
+}
+
+function computeTriAlign() {
+  const front = S.mask ? maskAxisSpan(S.mask, S.imgW, S.imgH) : { yminN: 0, ymaxN: 1, xminN: 0, xmaxN: 1 };
+  const sideY = tableYSpanN(S.triDepth && S.triDepth.side);
+  const topX = tableXSpanN(S.triTopCols);
+  return { front, sideY, topX };
+}
+
+function detectTopZFlip() {
+  const side = S.triDepth && S.triDepth.side;
+  const top = S.triTopCols;
+  if (!side || !top || !S.mask) return false;
+  let same = 0, flip = 0;
+  const w = S.imgW, h = S.imgH;
+  const step = Math.max(4, Math.round(Math.min(w, h) / 80));
+  for (let y = 0; y < h; y += step) {
+    for (let x = 0; x < w; x += step) {
+      if (!S.mask[y * w + x]) continue;
+      const yN = mapNorm(y / Math.max(1, h - 1), S.triAlign.front.yminN, S.triAlign.front.ymaxN, S.triAlign.sideY.yminN, S.triAlign.sideY.ymaxN);
+      const xN = mapNorm(x / Math.max(1, w - 1), S.triAlign.front.xminN, S.triAlign.front.xmaxN, S.triAlign.topX.xminN, S.triAlign.topX.xmaxN);
+      const sideC = zCandsAtY(side, yN, 3);
+      const topC = zCandsAtX(top, xN, 3);
+      if (!sideC.length || !topC.length) continue;
+      const s = sideC[(sideC.length / 2) | 0];
+      let d0 = 1, d1 = 1;
+      for (let i = 0; i < topC.length; i++) {
+        d0 = Math.min(d0, Math.abs(s - topC[i]));
+        d1 = Math.min(d1, Math.abs(s - (1 - topC[i])));
+      }
+      if (d1 < d0) flip++; else same++;
+    }
+  }
+  return flip > same + 4;
 }
 
 function extractLineCurvesFromRgb(rgb) {
@@ -1224,6 +1309,47 @@ function reconstructZTwoSurface(frontPts) {
   return smooth1D(zN, 14);
 }
 
+function reconstructZThreeView(frontPts) {
+  const align = S.triAlign || computeTriAlign();
+  const flip = !!S._topZFlip;
+  const n = frontPts.length;
+  const zN = new Float32Array(n);
+  let prev = null;
+  for (let i = 0; i < n; i++) {
+    const yImg = frontPts[i][0] / S.imgH;
+    const xImg = frontPts[i][1] / S.imgW;
+    const ySide = mapNorm(yImg, align.front.yminN, align.front.ymaxN, align.sideY.yminN, align.sideY.ymaxN);
+    const xTop = mapNorm(xImg, align.front.xminN, align.front.xmaxN, align.topX.xminN, align.topX.xmaxN);
+    const sideC = zCandsAtY(S.triDepth && S.triDepth.side, ySide, 5);
+    let topC = zCandsAtX(S.triTopCols, xTop, 5);
+    if (flip) topC = topC.map(z => 1 - z);
+    const pool = [];
+    for (let k = 0; k < sideC.length; k++) {
+      let tpen = 0.55;
+      for (let t = 0; t < topC.length; t++) tpen = Math.min(tpen, Math.abs(sideC[k] - topC[t]));
+      pool.push({ z: sideC[k], tpen });
+    }
+    for (let k = 0; k < topC.length; k++) {
+      let spen = 0.55;
+      for (let s = 0; s < sideC.length; s++) spen = Math.min(spen, Math.abs(topC[k] - sideC[s]));
+      pool.push({ z: topC[k], tpen: spen });
+    }
+    if (!pool.length) {
+      zN[i] = prev != null ? prev : 0.5;
+      continue;
+    }
+    let best = pool[0].z, bestS = 1e9;
+    for (let k = 0; k < pool.length; k++) {
+      const cont = prev == null ? 0 : Math.abs(pool[k].z - prev);
+      const s = cont + 1.1 * pool[k].tpen;
+      if (s < bestS) { bestS = s; best = pool[k].z; }
+    }
+    zN[i] = best;
+    prev = best;
+  }
+  return smooth1D(zN, 8);
+}
+
 function extractGoldenMask() {
   const p = getParams();
   const data = S.rgb.data;
@@ -1302,7 +1428,7 @@ function autoAdaptParams() {
     pruneLength = Math.max(2, Math.round(3 * scaleFactor));
     minPathLength = Math.max(15, Math.round(20 * scaleFactor));
     const rdpEl = document.getElementById('rdpEpsilon');
-    if (rdpEl) rdpEl.value = Math.max(parseFloat(rdpEl.value) || 8, 14);
+    if (rdpEl) rdpEl.value = 5;
   } else if (totalComponents <= 3) {
     // 少量大连通块：曲线比较完整，用小的形态学参数
     closeRadius = Math.max(1, Math.round(2 * scaleFactor));
@@ -3851,15 +3977,15 @@ function extractAll() {
     S.curveEdits = {}; S.edit3d.selected=-1; S.edit3d.dragHandle=-1;
     try { S.cardMeshes = buildAllCardMeshes(); } catch(e) { console.error('Card mesh error:', e); }
     if (S.inputMode === 'tri') {
-      S.view3d.rotX = -0.42;
-      S.view3d.rotY = 0.95;
+      S.view3d.rotX = 0;
+      S.view3d.rotY = 0;
     }
     drawCurves('canvasCurves', S.smoothedCurves, true, true);
     try { draw3DView(); } catch(e) { console.error('3D view error:', e); }
     drawEditor();
     updateCurveList();
     const ms = Math.round(performance.now() - t0);
-    const modeTxt = (S.inputMode==='tri' ? '三视图' : '单图') + (S.lineDrawing ? ' · 线稿' : '') + (S.inputMode==='tri' && S.lineDrawing ? ' · 挤出求交' : '');
+    const modeTxt = (S.inputMode==='tri' ? '三视图' : '单图') + (S.lineDrawing ? ' · 线稿' : '') + (S.inputMode==='tri' && S.lineDrawing ? ' · 三向对齐' : '');
     setStatus(`完成: ${S.smoothedCurves.length} 根曲线 · ${modeTxt} · ${ms}ms`);
     toast(`提取完成：${S.smoothedCurves.length} 根曲线（${ms}ms）`, 'ok');
   } catch(e) {
@@ -3997,7 +4123,7 @@ function buildCurveWorldPoints(cd, idx) {
 
     if (tri && tri.side) {
       if (S.lineDrawing) {
-        if (!cd._epiZN || cd._epiZN.length !== n) cd._epiZN = reconstructZTwoSurface(curve);
+        if (!cd._epiZN || cd._epiZN.length !== n) cd._epiZN = reconstructZThreeView(curve);
         z = (cd._epiZN[pi] - 0.5) * 2 * depthRange;
       } else {
         const zSideN = queryRowTable(tri.side, yN, xN);
@@ -4121,14 +4247,13 @@ function projectWorld(p, view) {
   return { x: view.cx + x1*view.sceneScale*persp, y: view.cy + y1*view.sceneScale*persp, z:z2, s:persp };
 }
 
-function ensureRefCanvas() {
-  if (!S.rgb) return null;
-  if (S._refCanvas && S._refCanvas.width === S.imgW && S._refCanvas.height === S.imgH) return S._refCanvas;
-  const w = S.imgW, h = S.imgH;
+function brightRefFromRgb(rgb) {
+  if (!rgb) return null;
+  const w = rgb.width, h = rgb.height;
   const cv = document.createElement('canvas');
   cv.width = w; cv.height = h;
   const out = new ImageData(w, h);
-  const src = S.rgb.data, dst = out.data;
+  const src = rgb.data, dst = out.data;
   for (let i = 0; i < src.length; i += 4) {
     const v = Math.max(src[i], src[i + 1], src[i + 2]);
     if (v < 18) { dst[i + 3] = 0; continue; }
@@ -4139,16 +4264,20 @@ function ensureRefCanvas() {
     dst[i + 3] = Math.min(255, 80 + lift);
   }
   cv.getContext('2d').putImageData(out, 0, 0);
-  S._refCanvas = cv;
   return cv;
 }
 
-function drawRefImagePlane(ctx, view) {
-  if (!S.showRefImage || !S.rgb) return;
-  const ref = ensureRefCanvas();
-  if (!ref) return;
-  const w = S.imgW, h = S.imgH;
-  const gw = 32, gh = 32;
+function ensureRefCanvas() {
+  if (!S.rgb) return null;
+  if (S._refCanvas && S._refCanvas.width === S.imgW && S._refCanvas.height === S.imgH) return S._refCanvas;
+  S._refCanvas = brightRefFromRgb(S.rgb);
+  return S._refCanvas;
+}
+
+function drawRefTiles(ctx, view, canvas, toWorld) {
+  if (!canvas) return;
+  const w = canvas.width, h = canvas.height;
+  const gw = 24, gh = 24;
   ctx.save();
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
@@ -4156,18 +4285,67 @@ function drawRefImagePlane(ctx, view) {
     for (let ix = 0; ix < gw; ix++) {
       const x0 = ix / gw * w, y0 = iy / gh * h;
       const sw = w / gw, sh = h / gh;
-      const p00 = projectWorld({ x: x0 - w / 2, y: y0 - h / 2, z: 0 }, view);
-      const p10 = projectWorld({ x: x0 + sw - w / 2, y: y0 - h / 2, z: 0 }, view);
-      const p01 = projectWorld({ x: x0 - w / 2, y: y0 + sh - h / 2, z: 0 }, view);
+      const p00 = projectWorld(toWorld(x0, y0), view);
+      const p10 = projectWorld(toWorld(x0 + sw, y0), view);
+      const p01 = projectWorld(toWorld(x0, y0 + sh), view);
       const dx = p10.x - p00.x, dy = p10.y - p00.y;
       const ex = p01.x - p00.x, ey = p01.y - p00.y;
       ctx.save();
       ctx.transform(dx / sw, dy / sw, ex / sh, ey / sh, p00.x, p00.y);
-      ctx.drawImage(ref, x0, y0, sw, sh, 0, 0, sw, sh);
+      ctx.drawImage(canvas, x0, y0, sw, sh, 0, 0, sw, sh);
       ctx.restore();
     }
   }
   ctx.restore();
+}
+
+function currentOrthoView() {
+  const { rotX, rotY } = S.view3d;
+  if (Math.abs(rotX + Math.PI / 2) < 0.4) return 'top';
+  if (Math.abs(Math.abs(rotY) - Math.PI / 2) < 0.4 && Math.abs(rotX) < 0.4) return 'side';
+  return 'front';
+}
+
+function drawRefImagePlane(ctx, view) {
+  if (!S.showRefImage) return;
+  const which = currentOrthoView();
+  const depthRange = S.imgW * 0.35;
+  const align = S.triAlign || { front: { yminN: 0, ymaxN: 1, xminN: 0, xmaxN: 1 }, sideY: { yminN: 0, ymaxN: 1 }, topX: { xminN: 0, xmaxN: 1 } };
+  if (which === 'side' && S.triRgb && S.triRgb.side) {
+    if (!S._refSide) S._refSide = brightRefFromRgb(S.triRgb.side);
+    const rgb = S.triRgb.side;
+    drawRefTiles(ctx, view, S._refSide, (sx, sy) => {
+      const ySideN = sy / Math.max(1, rgb.height - 1);
+      const yFrontN = mapNorm(ySideN, align.sideY.yminN, align.sideY.ymaxN, align.front.yminN, align.front.ymaxN);
+      return {
+        x: 0,
+        y: yFrontN * (S.imgH - 1) - S.imgH / 2,
+        z: (sx / Math.max(1, rgb.width - 1) - 0.5) * 2 * depthRange
+      };
+    });
+    return;
+  }
+  if (which === 'top' && S.triRgb && S.triRgb.top) {
+    if (!S._refTop) S._refTop = brightRefFromRgb(S.triRgb.top);
+    const rgb = S.triRgb.top;
+    const flip = !!S._topZFlip;
+    drawRefTiles(ctx, view, S._refTop, (tx, ty) => {
+      const xTopN = tx / Math.max(1, rgb.width - 1);
+      const xFrontN = mapNorm(xTopN, align.topX.xminN, align.topX.xmaxN, align.front.xminN, align.front.xmaxN);
+      let zN = ty / Math.max(1, rgb.height - 1);
+      if (flip) zN = 1 - zN;
+      return {
+        x: xFrontN * (S.imgW - 1) - S.imgW / 2,
+        y: 0,
+        z: (zN - 0.5) * 2 * depthRange
+      };
+    });
+    return;
+  }
+  const ref = ensureRefCanvas();
+  if (!ref) return;
+  const w = S.imgW, h = S.imgH;
+  drawRefTiles(ctx, view, ref, (x, y) => ({ x: x - w / 2, y: y - h / 2, z: 0 }));
 }
 
 // ============================================================
@@ -4528,9 +4706,33 @@ function init3DInteractions() {
       toast(S.edit3d.enabled?'已进入3D编辑模式':'已退出编辑模式','info',1200);
     });
     document.getElementById('btnResetView').addEventListener('click', () => {
-      S.view3d.rotX=-0.3; S.view3d.rotY=0.1; S.view3d.zoom=1.0; draw3DView();
-      toast('视角已重置','info',1000);
+      setOrthoView(S.inputMode === 'tri' ? 'front' : 'free');
     });
+    function setOrthoView(which) {
+      if (which === 'front') { S.view3d.rotX = 0; S.view3d.rotY = 0; }
+      else if (which === 'side') { S.view3d.rotX = 0; S.view3d.rotY = Math.PI / 2; }
+      else if (which === 'top') { S.view3d.rotX = -Math.PI / 2; S.view3d.rotY = 0; }
+      else { S.view3d.rotX = -0.3; S.view3d.rotY = 0.1; }
+      S.view3d.zoom = 1.0;
+      const names = { front: '正视=正面图', side: '侧视=侧面图', top: '俯视=顶面图', free: '默认视角' };
+      ['btnViewFront','btnViewSide','btnViewTop'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const on = (id === 'btnViewFront' && which === 'front') || (id === 'btnViewSide' && which === 'side') || (id === 'btnViewTop' && which === 'top');
+        el.style.color = on ? '#ffd700' : '#bbb';
+        el.style.background = on ? '#3a3200' : '#2a2a2a';
+      });
+      const hint = document.getElementById('hint3d');
+      if (hint && !S.edit3d.enabled) hint.textContent = which === 'free' ? '拖拽旋转视角 | 滚轮缩放' : (names[which] + ' · 黄线应叠在参照图上');
+      draw3DView();
+      toast(names[which] || '视角已重置', 'info', 1400);
+    }
+    const bf = document.getElementById('btnViewFront');
+    const bs = document.getElementById('btnViewSide');
+    const bt = document.getElementById('btnViewTop');
+    if (bf) bf.addEventListener('click', () => setOrthoView('front'));
+    if (bs) bs.addEventListener('click', () => setOrthoView('side'));
+    if (bt) bt.addEventListener('click', () => setOrthoView('top'));
     document.getElementById('btnClearEdit').addEventListener('click', () => {
       const n = Object.keys(S.curveEdits).length;
       S.curveEdits = {}; S.edit3d.selected=-1;
@@ -5043,7 +5245,7 @@ function loadTriFile(view, file) {
       slot.querySelector('.state').textContent = `${img.width}×${img.height} ✓`;
       if (view==='front') {
         S.image = img; S.imgW = img.width; S.imgH = img.height;
-        S.rgb = rgb; S._refCanvas = null;
+        S.rgb = rgb; S._refCanvas = null; S._refSide = null; S._refTop = null;
         const d=rgb.data; let sum=0;
         for(let i=0;i<d.length;i+=4) sum+=Math.max(d[i],d[i+1],d[i+2])/255;
         S.invertMask = (sum/(d.length/4))>0.5;
