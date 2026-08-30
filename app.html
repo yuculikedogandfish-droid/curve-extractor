@@ -4310,6 +4310,98 @@ function drawRefImagePlane(ctx, view) {
   drawRefTiles(ctx, view, ref, (x, y) => ({ x: x - w / 2, y: y - h / 2, z: 0 }));
 }
 
+function triDepthRange() { return S.imgW * 0.35; }
+
+function drawOrthoBlueprint(ctx, W, H) {
+  const preset = S.view3d.preset;
+  const zoom = S.view3d.zoom || 1;
+  const scale = Math.min(W / S.imgW, H / S.imgH) * 1.1 * zoom;
+  const cx = W / 2, cy = H / 2;
+  const dR = triDepthRange();
+  let toScreen;
+  if (preset === 'side') toScreen = (p) => ({ x: cx + p.z * scale, y: cy + p.y * scale, z: p.x, s: 1 });
+  else if (preset === 'top') toScreen = (p) => ({ x: cx + p.x * scale, y: cy + p.z * scale, z: -p.y, s: 1 });
+  else toScreen = (p) => ({ x: cx + p.x * scale, y: cy + p.y * scale, z: p.z, s: 1 });
+
+  if (S.showRefImage) {
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    if (preset === 'front' && S.rgb) {
+      const ref = ensureRefCanvas();
+      if (ref) ctx.drawImage(ref, cx - S.imgW * scale / 2, cy - S.imgH * scale / 2, S.imgW * scale, S.imgH * scale);
+    } else if (preset === 'side' && S.triRgb && S.triRgb.side) {
+      if (!S._refSide) S._refSide = brightRefFromRgb(S.triRgb.side);
+      if (S._refSide) ctx.drawImage(S._refSide, cx - dR * scale, cy - S.imgH * scale / 2, 2 * dR * scale, S.imgH * scale);
+    } else if (preset === 'top' && S.triRgb && S.triRgb.top) {
+      if (!S._refTop) S._refTop = brightRefFromRgb(S.triRgb.top);
+      if (S._refTop) {
+        ctx.save();
+        if (S._topZFlip) {
+          ctx.translate(cx, cy);
+          ctx.scale(1, -1);
+          ctx.drawImage(S._refTop, -S.imgW * scale / 2, -dR * scale, S.imgW * scale, 2 * dR * scale);
+        } else {
+          ctx.drawImage(S._refTop, cx - S.imgW * scale / 2, cy - dR * scale, S.imgW * scale, 2 * dR * scale);
+        }
+        ctx.restore();
+      }
+    }
+    ctx.restore();
+  }
+
+  const curves3d = S.smoothedCurves.map((cd, idx) => {
+    const worldPts = buildCurveWorldPoints(cd, idx);
+    const points = worldPts.map(toScreen);
+    return { points, avgZ: 0, idx, worldPts };
+  });
+  S._last3D = { curves3d, view: { cx, cy, sceneScale: scale, ortho: true, focal: 800, cosX: 1, sinX: 0, cosY: 1, sinY: 0 }, W, H };
+
+  const levelStyles = {
+    1: { color: '#FFD700', lineWidth: 2.2, alpha: 0.95 },
+    2: { color: '#FFA500', lineWidth: 1.6, alpha: 0.9 },
+    3: { color: '#C9A227', lineWidth: 1.2, alpha: 0.85 }
+  };
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const curve of curves3d) {
+    const pts = curve.points;
+    if (pts.length < 2) continue;
+    const level = S.curveLevels[curve.idx] || 3;
+    if (!S.showLevels[level - 1]) continue;
+    const style = levelStyles[level];
+    ctx.strokeStyle = style.color;
+    ctx.globalAlpha = style.alpha;
+    ctx.lineWidth = style.lineWidth;
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  if (S.card.enabled) {
+    if (!S.cardMeshes) buildAllCardMeshes();
+    ctx.strokeStyle = 'rgba(255,215,0,0.35)';
+    ctx.lineWidth = 0.8;
+    for (const mesh of (S.cardMeshes || [])) {
+      if (!S.showLevels[(S.curveLevels[mesh.idx] || 3) - 1]) continue;
+      for (const sheet of mesh.sheets) {
+        const V = sheet.verts;
+        ctx.beginPath();
+        for (let i = 0; i < V.length; i += 2) {
+          const q = toScreen(V[i]);
+          if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y);
+        }
+        ctx.stroke();
+      }
+    }
+  }
+
+  ctx.fillStyle = '#888';
+  ctx.font = '12px sans-serif';
+  const tag = preset === 'side' ? '侧视=侧面图' : (preset === 'top' ? '俯视=顶面图' : '正视=正面图');
+  ctx.fillText(tag + ' · 工程图叠加 · 黄线应落在白线上', 10, 20);
+}
+
 // ============================================================
 // 3D预览
 // ============================================================
@@ -4329,6 +4421,11 @@ function draw3DView() {
   ctx.fillRect(0, 0, W, H);
 
   if (!S.smoothedCurves || !S.smoothedCurves.length) return;
+
+  if (S.view3d.preset === 'front' || S.view3d.preset === 'side' || S.view3d.preset === 'top') {
+    drawOrthoBlueprint(ctx, W, H);
+    return;
+  }
 
   // 3D场景以图片坐标为基准，缩放到适应容器
   const cx = W / 2, cy = H / 2;
