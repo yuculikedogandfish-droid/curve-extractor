@@ -105,6 +105,55 @@
     border-radius: 6px; padding: 8px 12px; font-size: 11px; pointer-events: none;
     z-index: 100; display: none; min-width: 140px;
   }
+
+  /* 交互反馈增强 */
+  .btn { position: relative; }
+  .btn:active { transform: scale(0.96); }
+  .btn:disabled, .btn.is-busy {
+    opacity: 0.55; cursor: not-allowed; pointer-events: none;
+  }
+  .btn.is-busy::after {
+    content: ''; position: absolute; right: 8px; top: 50%; width: 12px; height: 12px;
+    margin-top: -6px; border: 2px solid rgba(0,0,0,0.3); border-top-color: #000;
+    border-radius: 50%; animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .card-count-btn { background:#2a2a2a; color:#bbb; flex:1; padding:6px 0; font-size:11px; }
+  .card-count-btn:hover { background:#333; }
+  .card-count-btn.active { background:#FFD700; color:#000; font-weight:600; }
+  .upload-zone.dragover {
+    border-color: #ffd700; background: rgba(255,215,0,0.12);
+    box-shadow: inset 0 0 0 2px #ffd700;
+  }
+  .upload-zone.loaded { border-color: #4caf50; }
+  /* toast */
+  #toast {
+    position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: rgba(30,30,30,0.96); color:#eee; border:1px solid #444;
+    padding: 10px 18px; border-radius: 8px; font-size: 13px; z-index: 9999;
+    opacity: 0; transition: all 0.25s; pointer-events: none; max-width: 70%;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #toast.ok { border-color:#4caf50; }
+  #toast.err { border-color:#e53935; }
+  /* 模式切换 */
+  .mode-switch { display:flex; gap:0; border:1px solid #333; border-radius:6px; overflow:hidden; }
+  .mode-switch button { flex:1; background:#1e1e1e; color:#aaa; border:none; padding:8px 0; font-size:12px; cursor:pointer; transition:all .2s; }
+  .mode-switch button.active { background:#FFD700; color:#000; font-weight:600; }
+  /* 三视图上传槽 */
+  .tri-slots { display:none; flex-direction:column; gap:6px; }
+  .tri-slots.show { display:flex; }
+  .tri-slot {
+    display:flex; align-items:center; gap:8px; border:1px dashed #444; border-radius:6px;
+    padding:8px; cursor:pointer; font-size:12px; color:#aaa; transition:all .2s;
+  }
+  .tri-slot:hover { border-color:#ffd700; }
+  .tri-slot.filled { border-style:solid; border-color:#4caf50; color:#8bc34a; }
+  .tri-slot .tag { width:40px; font-weight:600; color:#ffd700; }
+  .tri-slot .state { margin-left:auto; font-size:11px; color:#666; }
+  .step-bar { display:flex; gap:4px; margin:8px 0 4px; }
+  .step-dot { flex:1; height:4px; border-radius:2px; background:#2a2a2a; transition:background .2s; }
+  .step-dot.done { background:#ffd700; }
 </style>
 </head>
 <body>
@@ -120,16 +169,58 @@
     <!-- 上传 -->
     <div class="section">
       <div class="section-title">1. 导入图片</div>
-      <div class="upload-zone" id="uploadZone">
-        <div class="icon">📷</div>
-        <div class="text">点击或拖拽图片</div>
-        <div class="hint">黑底金色光带 / 任意背景</div>
+      <div class="mode-switch" style="margin-bottom:10px;">
+        <button id="modeSingle" class="active">单图识别</button>
+        <button id="modeTri">三视图识别</button>
       </div>
-      <input type="file" id="fileInput" accept="image/*" style="display:none;">
-      <div class="btn-row">
+
+      <!-- 单图模式 -->
+      <div id="singleInput">
+        <div class="upload-zone" id="uploadZone">
+          <div class="icon">📷</div>
+          <div class="text">点击或拖拽图片</div>
+          <div class="hint">黑底金色光带 / 任意背景</div>
+        </div>
+        <input type="file" id="fileInput" accept="image/*" style="display:none;">
+      </div>
+
+      <!-- 三视图模式 -->
+      <div class="tri-slots" id="triInput">
+        <div class="tri-slot" data-view="front">
+          <span class="tag">正面</span><span>Front · X-Y（必需）</span><span class="state">未上传</span>
+        </div>
+        <div class="tri-slot" data-view="side">
+          <span class="tag">侧面</span><span>Side · Z-Y（提供深度）</span><span class="state">未上传</span>
+        </div>
+        <div class="tri-slot" data-view="top">
+          <span class="tag">顶面</span><span>Top · X-Z（校正，可选）</span><span class="state">未上传</span>
+        </div>
+        <input type="file" id="triFileInput" accept="image/*" style="display:none;">
+        <div style="font-size:11px;color:#888;line-height:1.5;margin-top:2px;">
+          三视图需同尺度、根部对齐。正面提供X/Y，侧面按高度提供Z深度，顶面辅助校正，3D更准确。
+        </div>
+      </div>
+
+      <div class="btn-row" style="margin-top:10px;">
         <button class="btn btn-secondary" id="btnDemo">加载示例</button>
         <button class="btn" id="btnExtract">提取曲线</button>
         <button class="btn btn-secondary" id="btnFineMode" style="margin-top:8px;width:100%;">精细模式（推荐光效图）</button>
+      </div>
+    </div>
+
+    <!-- 背景处理 -->
+    <div class="section">
+      <div class="section-title">0. 背景处理（非纯色背景）</div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" id="bgEnabled" checked> 自动去除背景
+        </label>
+        <div style="font-size:11px;color:#888;margin-top:2px;">边缘采样估计背景色，flood-fill 只剔除与边缘连通的背景，不影响内部同色区域</div>
+      </div>
+      <div class="form-group">
+        <label>背景容差 <span class="val" id="bgTolVal">60</span></label>
+        <input type="range" id="bgTol" min="10" max="160" value="60">
+        <div style="font-size:11px;color:#888;margin-top:2px;">背景越杂越大，误删前景则调小</div>
       </div>
     </div>
 
@@ -219,17 +310,60 @@
       </div>
     </div>
 
+    <!-- 面片设置 -->
+    <div class="section">
+      <div class="section-title">6. 交叉面片（UV网格）</div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" id="cardEnabled" checked> 3D中显示面片
+        </label>
+      </div>
+      <div class="form-group">
+        <label>面片数量/布局 <span class="val" id="cardCountVal">2片·十字</span></label>
+        <div style="display:flex;gap:6px;margin-top:4px;">
+          <button class="btn btn-sm card-count-btn" data-count="1">单片</button>
+          <button class="btn btn-sm card-count-btn active" data-count="2">2片十字</button>
+          <button class="btn btn-sm card-count-btn" data-count="3">3片</button>
+          <button class="btn btn-sm card-count-btn" data-count="4">4片</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>两片夹角（非十字可调） <span class="val" id="crossAngVal">90°</span></label>
+        <input type="range" id="crossAngle" min="10" max="180" value="90">
+      </div>
+      <div class="form-group">
+        <label>面片宽度 <span class="val" id="cardWVal">24</span></label>
+        <input type="range" id="cardWidth" min="4" max="120" value="24">
+      </div>
+      <div class="form-group">
+        <label>尖端收窄 <span class="val" id="taperVal">0.15</span></label>
+        <input type="range" id="cardTaper" min="0" max="1" step="0.05" value="0.15">
+      </div>
+      <div class="form-group" style="display:flex;gap:14px;">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;">
+          <input type="checkbox" id="cardFill" checked> 填充
+        </label>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;">
+          <input type="checkbox" id="cardWire" checked> UV线框
+        </label>
+      </div>
+    </div>
+
     <!-- 导出 -->
     <div class="section">
-      <div class="section-title">6. 导出</div>
+      <div class="section-title">7. 导出</div>
       <div class="btn-row">
         <button class="btn btn-secondary" id="btnExportSVG">SVG</button>
         <button class="btn btn-secondary" id="btnExportJSON">JSON</button>
       </div>
       <div class="btn-row" style="margin-top:8px;">
         <button class="btn btn-secondary" id="btnExportDXF">DXF</button>
-        <button class="btn btn-secondary" id="btnExportOBJ">OBJ</button>
+        <button class="btn btn-secondary" id="btnExportOBJ">线条OBJ</button>
       </div>
+      <div class="btn-row" style="margin-top:8px;">
+        <button class="btn" id="btnExportCardOBJ">导出面片OBJ（含UV）</button>
+      </div>
+      <div style="font-size:11px;color:#888;margin-top:6px;">面片OBJ含 v/vt/f，无贴图，贴图在UE中自行指定</div>
     </div>
   </div>
 
@@ -237,6 +371,7 @@
   <div class="view-area">
     <div class="view-tabs">
       <div class="view-tab active" data-view="original">原图</div>
+      <div class="view-tab" data-view="bg">去背景</div>
       <div class="view-tab" data-view="mask">HSV掩码</div>
       <div class="view-tab" data-view="solid">固化后</div>
       <div class="view-tab" data-view="skeleton">骨架</div>
@@ -246,6 +381,7 @@
     </div>
     <div class="view-content">
       <div class="view-pane active" id="pane-original"><div class="canvas-container"><canvas id="canvasOriginal"></canvas></div></div>
+      <div class="view-pane" id="pane-bg"><div class="canvas-container"><canvas id="canvasBg"></canvas></div></div>
       <div class="view-pane" id="pane-mask"><div class="canvas-container"><canvas id="canvasMask"></canvas></div></div>
       <div class="view-pane" id="pane-solid"><div class="canvas-container"><canvas id="canvasSolid"></canvas></div></div>
       <div class="view-pane" id="pane-skeleton"><div class="canvas-container"><canvas id="canvasSkeleton"></canvas></div></div>
@@ -278,6 +414,8 @@
   </div>
 </div>
 
+<div id="toast"></div>
+
 <script>
 // ============================================================
 // Curve Extractor — 纯 JS 实现
@@ -298,6 +436,27 @@ const S = {
   showRefImage: true,
   showLevels: [true, true, true], // 是否显示一/二/三级曲线
   invertMask: false, // 浅色背景时自动反转掩码
+  // 背景去除
+  bgEnabled: true,       // 是否启用自动背景去除
+  bgMask: null,          // 背景mask（1=背景，需剔除）
+  bgColor: null,         // 估计出的背景色 [r,g,b]
+  bgMode: 'auto',        // auto=自动边缘检测 / manual=手动取色
+  // 三视图
+  inputMode: 'single',   // single=单图 / tri=三视图
+  triImages: { front: null, side: null, top: null },
+  triRgb: { front: null, side: null, top: null },
+  // 面片生成
+  card: {
+    enabled: true,
+    count: 2,            // 面片数量：1/2/3/4
+    crossAngle: 90,      // 交叉角度（度），2片时两片夹角
+    width: 24,           // 面片半宽（像素）
+    taper: 0.15,         // 尖端收窄比例（0=等宽，1=尖到0）
+    segments: 0,         // 长度方向分段数（0=跟随曲线采样）
+    wireframe: true,     // 显示线框
+    fill: true,          // 显示半透明填充
+  },
+  cardMeshes: null,      // 生成的面片网格数据
 };
 
 const CURVE_COLORS = ["#FF6B6B", "#4ECDC4", "#45B7D1", "#FFA07A", "#98D8C8"];
@@ -306,6 +465,30 @@ const CURVE_COLORS = ["#FF6B6B", "#4ECDC4", "#45B7D1", "#FFA07A", "#98D8C8"];
 // 工具函数
 // ============================================================
 function setStatus(text) { document.getElementById('status').textContent = text; }
+
+// toast 轻提示
+let _toastTimer = null;
+function toast(msg, type='ok', duration=2200) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'show ' + type;
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { el.className = ''; }, duration);
+}
+// 按钮忙碌态
+function setBusy(btnId, busy, busyText) {
+  const b = document.getElementById(btnId);
+  if (!b) return;
+  if (busy) {
+    b.dataset._txt = b.textContent;
+    if (busyText) b.textContent = busyText;
+    b.classList.add('is-busy'); b.disabled = true;
+  } else {
+    b.classList.remove('is-busy'); b.disabled = false;
+    if (b.dataset._txt) b.textContent = b.dataset._txt;
+  }
+}
 
 function getParams() {
   return {
@@ -373,7 +556,9 @@ function loadImage(file) {
       }
       S.invertMask = (sumV / (d.length / 4)) > 0.5;
       drawCanvas('canvasOriginal', S.rgb);
+      document.getElementById('uploadZone').classList.add('loaded');
       setStatus(`已加载: ${S.imgW}×${S.imgH}${S.invertMask ? ' (浅色背景，自动反色)' : ''}`);
+      toast(`图片已加载 ${S.imgW}×${S.imgH}${S.invertMask?'，检测到浅色背景':''}`, 'ok', 1800);
     };
     img.src = e.target.result;
   };
@@ -419,6 +604,173 @@ function rgb2hsv(r, g, b) {
   return [h, s, v];
 }
 
+// ============================================================
+// 0. 非纯色背景自动去除
+// ============================================================
+// 估计背景色：采样四条边缘，用中位数避免贴边前景干扰
+function estimateBackgroundColor(data, w, h) {
+  const samples = [];
+  const step = Math.max(1, Math.round(Math.min(w, h) / 200));
+  const push = (x, y) => {
+    const i = (y * w + x) * 4;
+    samples.push([data[i], data[i+1], data[i+2]]);
+  };
+  for (let x = 0; x < w; x += step) { push(x, 0); push(x, h-1); }
+  for (let y = 0; y < h; y += step) { push(0, y); push(w-1, y); }
+  const med = ch => {
+    const arr = samples.map(s => s[ch]).sort((a,b) => a-b);
+    return arr[Math.floor(arr.length/2)];
+  };
+  return [med(0), med(1), med(2)];
+}
+
+// 颜色距离（加权欧氏距离，对亮度更敏感）
+function colorDist(r1, g1, b1, r2, g2, b2) {
+  const rm = (r1 + r2) / 2;
+  const dr = r1 - r2, dg = g1 - g2, db = b1 - b2;
+  return Math.sqrt((2 + rm/256)*dr*dr + 4*dg*dg + (2 + (255-rm)/256)*db*db);
+}
+
+// 从边缘区域生长背景（局部颜色连续性，鲁棒应对渐变/噪点，遇亮前景停止）
+// 返回 bgMask: 1=背景
+function buildBackgroundMask() {
+  if (!S.rgb) return null;
+  const w = S.imgW, h = S.imgH;
+  const data = S.rgb.data;
+  const tol = parseFloat((document.getElementById('bgTol')||{}).value || 60);
+  S.bgColor = estimateBackgroundColor(data, w, h);
+  const [br, bg, bb] = S.bgColor;
+  const bgVal = Math.max(br,bg,bb)/255;
+  // 前景亮度上限：显著亮于背景的不视为背景（金色光带通常很亮）
+  const p = getParams();
+  const localTol = tol * 0.5;       // 相邻像素连续性阈值（容忍渐变/噪点）
+  const globalTol = tol;            // 与全局背景色阈值
+
+  const bgMask = new Uint8Array(w*h);
+  const queue = new Int32Array(w*h);
+  let qh=0, qt=0;
+  const isForeground = (i) => {
+    const r=data[i*4],g=data[i*4+1],b=data[i*4+2];
+    const [hue,sat,val]=rgb2hsv(r,g,b);
+    const golden = hue>=p.hueMin&&hue<=p.hueMax&&sat>=p.satMin&&val>=p.valMin;
+    const muchBrighter = val > bgVal + 0.22;
+    return (golden || muchBrighter);
+  };
+  const seed = (x,y) => {
+    if(x<0||y<0||x>=w||y>=h)return;
+    const i=y*w+x;
+    if(bgMask[i]||isForeground(i))return;
+    if(colorDist(data[i*4],data[i*4+1],data[i*4+2],br,bg,bb)<=globalTol){bgMask[i]=1;queue[qt++]=i;}
+  };
+  for(let x=0;x<w;x++){seed(x,0);seed(x,h-1);}
+  for(let y=0;y<h;y++){seed(0,y);seed(w-1,y);}
+
+  while(qh<qt){
+    const idx=queue[qh++];
+    const y=(idx/w)|0,x=idx-y*w;
+    const cr=data[idx*4],cg=data[idx*4+1],cb=data[idx*4+2];
+    const nb=[[x+1,y],[x-1,y],[x,y+1],[x,y-1]];
+    for(const [nx,ny] of nb){
+      if(nx<0||ny<0||nx>=w||ny>=h)continue;
+      const ni=ny*w+nx;
+      if(bgMask[ni]||isForeground(ni))continue;
+      // 局部连续：与当前背景点接近；或与全局背景色接近
+      const dLocal=colorDist(data[ni*4],data[ni*4+1],data[ni*4+2],cr,cg,cb);
+      const dGlobal=colorDist(data[ni*4],data[ni*4+1],data[ni*4+2],br,bg,bb);
+      if(dLocal<=localTol||dGlobal<=globalTol){bgMask[ni]=1;queue[qt++]=ni;}
+    }
+  }
+  S.bgMask = bgMask;
+  // 绘制去背景结果（背景置黑，前景保留）
+  const out = new ImageData(w, h);
+  for (let i = 0; i < w*h; i++) {
+    if (bgMask[i]) { out.data[i*4+3] = 255; }
+    else {
+      out.data[i*4] = data[i*4]; out.data[i*4+1] = data[i*4+1];
+      out.data[i*4+2] = data[i*4+2]; out.data[i*4+3] = 255;
+    }
+  }
+  const cv = document.getElementById('canvasBg');
+  if (cv) {
+    cv.width = w; cv.height = h;
+    cv.getContext('2d').putImageData(out, 0, 0);
+  }
+  let bgCount = 0; for (let i=0;i<bgMask.length;i++) bgCount += bgMask[i];
+  console.log(`[BgRemove] 背景色 rgb(${S.bgColor.map(v=>Math.round(v)).join(',')}), 背景占比 ${(100*bgCount/(w*h)).toFixed(1)}%`);
+  return bgMask;
+}
+
+// ============================================================
+// 三视图：深度查找表
+// ============================================================
+// 从任意ImageData提取前景二值掩码（复用HSV/亮度/反色/背景逻辑）
+function computeMaskFromRgb(rgb, w, h, invert) {
+  const p = getParams();
+  const data = rgb.data;
+  const mask = new Uint8Array(w*h);
+  let localBg = null;
+  if (S.bgEnabled) {
+    const samples=[]; const step=Math.max(1,Math.round(Math.min(w,h)/200));
+    const push=(x,y)=>{const i=(y*w+x)*4;samples.push([data[i],data[i+1],data[i+2]]);};
+    for(let x=0;x<w;x+=step){push(x,0);push(x,h-1);}
+    for(let y=0;y<h;y+=step){push(0,y);push(w-1,y);}
+    const med=ch=>{const a=samples.map(s=>s[ch]).sort((x,y)=>x-y);return a[Math.floor(a.length/2)];};
+    localBg=[med(0),med(1),med(2)];
+  }
+  const tol = parseFloat((document.getElementById('bgTol')||{}).value||60);
+  for (let i=0;i<w*h;i++){
+    const r=data[i*4],g=data[i*4+1],b=data[i*4+2];
+    const [hue,sat,val]=rgb2hsv(r,g,b);
+    let m = (((hue>=p.hueMin&&hue<=p.hueMax)&&sat>=p.satMin&&val>=p.valMin)||val>=p.brightThresh)&&val>=p.brightLayer ?1:0;
+    if (invert) m = m?0:1;
+    if (localBg && colorDist(r,g,b,localBg[0],localBg[1],localBg[2]) < tol) m=0;
+    mask[i]=m;
+  }
+  return mask;
+}
+
+// 由侧面/顶面掩码构建逐行前景横坐标表（归一化0..1）
+function buildRowTable(mask, w, h) {
+  const rows = new Array(h);
+  for (let y=0;y<h;y++){
+    const arr=[];
+    for (let x=0;x<w;x++) if (mask[y*w+x]) arr.push(x/(w-1));
+    rows[y]=arr;
+  }
+  return { rows, w, h };
+}
+
+// 在行表中按归一化高度yN、水平分位xN查询横坐标（0..1），找不到返回null
+function queryRowTable(table, yN, xN) {
+  if (!table) return null;
+  const y = Math.round(yN*(table.h-1));
+  for (let r=0;r<8;r++) {
+    for (const yy of [y-r, y+r]) {
+      if (yy>=0 && yy<table.h && table.rows[yy] && table.rows[yy].length) {
+        const arr=table.rows[yy];
+        const idx=Math.max(0,Math.min(arr.length-1, Math.round(xN*(arr.length-1))));
+        return arr[idx];
+      }
+    }
+  }
+  return null;
+}
+
+// 处理上传的三视图：side/top 生成深度表
+function processTriViews() {
+  S.triDepth = { side:null, top:null };
+  ['side','top'].forEach(view=>{
+    const rgb = S.triRgb[view];
+    if (!rgb) return;
+    const d=rgb.data; let sum=0;
+    for(let i=0;i<d.length;i+=4) sum+=Math.max(d[i],d[i+1],d[i+2])/255;
+    const inv = (sum/(d.length/4))>0.5;
+    const mask = computeMaskFromRgb(rgb, rgb.width, rgb.height, inv);
+    S.triDepth[view] = buildRowTable(mask, rgb.width, rgb.height);
+    console.log(`[TriView] ${view} 深度表 ${rgb.width}x${rgb.height} invert=${inv}`);
+  });
+}
+
 function extractGoldenMask() {
   const p = getParams();
   const data = S.rgb.data;
@@ -436,6 +788,7 @@ function extractGoldenMask() {
     const layerMask = val >= p.brightLayer; // 亮度分层
     let m = ((hueMask && satMask && valMask) || brightMask) && layerMask ? 1 : 0;
     if (S.invertMask) m = m ? 0 : 1; // 浅色背景反转：暗线条为目标
+    if (S.bgEnabled && S.bgMask && S.bgMask[i]) m = 0; // 剔除自动检测到的背景
     mask[i] = m;
   }
   S.mask = mask;
@@ -2827,19 +3180,30 @@ function drawCurves(canvasId, curves, showControl = false, showOriginal = false)
 // 完整提取流程
 // ============================================================
 function extractAll() {
-  if (!S.image) { setStatus('请先加载图片'); return; }
+  if (!S.image) { toast('请先加载图片', 'err'); return; }
+  setBusy('btnExtract', true, '提取中...');
   setStatus('提取中...');
+  const t0 = performance.now();
   setTimeout(() => {
-    setStatus('1/5 HSV掩码...');
+  try {
+    // 三视图：构建side/top深度表
+    if (S.inputMode === 'tri') {
+      setStatus('三视图深度对齐...');
+      try { processTriViews(); } catch(e){ console.error('TriView error:', e); S.triDepth = {side:null,top:null}; }
+    }
+    setStatus('1/6 自动背景去除...');
+    if (S.bgEnabled) { try { buildBackgroundMask(); } catch(e){ console.error('Bg error:', e); S.bgMask = null; } }
+    else { S.bgMask = null; }
+    setStatus('2/6 HSV掩码...');
     extractGoldenMask();
 
     // 自适应参数：根据掩码特征自动调整形态学参数
-    setStatus('1.5/5 自适应参数分析...');
+    setStatus('2.5/6 自适应参数分析...');
     autoAdaptParams();
 
-    setStatus('2/5 形态学固化...');
+    setStatus('3/6 形态学固化...');
     solidifyMask();
-    setStatus('3/5 骨架化+修剪...');
+    setStatus('4/6 骨架化+修剪...');
     S.skeleton = zhangSuen(S.solid, S.imgW, S.imgH);
     S.skeletonPruned = pruneSkeleton(S.skeleton, S.imgW, S.imgH, getParams().pruneLength);
     drawBinary('canvasSkeleton', S.skeletonPruned, S.imgW, S.imgH);
@@ -2848,7 +3212,7 @@ function extractAll() {
       // 方向场追踪（带间隙跨越、方向惯性、短段连接）
       const useSkeletonGraph = false;
       if (useSkeletonGraph) {
-        setStatus('4/5 骨架图论追踪...');
+        setStatus('5/6 骨架图论追踪...');
         S._lastTraceMode = '骨架图论追踪';
         try {
           const p = getParams();
@@ -2871,7 +3235,7 @@ function extractAll() {
           S.curves = [];
         }
       } else {
-        setStatus('4/5 方向场追踪...');
+        setStatus('5/6 方向场追踪...');
         S._lastTraceMode = '方向场追踪';
         try {
           const p = getParams();
@@ -2900,7 +3264,7 @@ function extractAll() {
         }
       }
     } else if (S.traceMode === 'smart') {
-      setStatus('4/5 智能端点追踪...');
+      setStatus('5/6 智能端点追踪...');
       try {
         const p = getParams();
         const rawCurves = traceAllCurvesSmart(S.skeletonPruned, S.imgW, S.imgH, p.minLength, 50);
@@ -2923,19 +3287,30 @@ function extractAll() {
         S.curves = [];
       }
     } else {
-      setStatus('4/5 BFS追踪+角度聚类...');
+      setStatus('5/6 BFS追踪+角度聚类...');
       extract5MainCurves();
     }
 
-    setStatus('5/5 RDP简化+B样条插值...');
+    setStatus('6/6 RDP简化+B样条+面片生成...');
     smoothAllCurves();
     try { S.curveLevels = classifyCurves(S.smoothedCurves, S.brightness, S.imgW, S.imgH); } catch(e) { console.error('Classify error:', e); }
     try { estimateCurveDepths(); } catch(e) { console.error('Depth error:', e); }
+    try { S.cardMeshes = buildAllCardMeshes(); } catch(e) { console.error('Card mesh error:', e); }
     drawCurves('canvasCurves', S.smoothedCurves, true, true);
     try { draw3DView(); } catch(e) { console.error('3D view error:', e); }
     drawEditor();
     updateCurveList();
-    setStatus(`完成: ${S.smoothedCurves.length} 根曲线 (${S._lastTraceMode || (S.traceMode === 'of' ? '方向场追踪' : S.traceMode === 'smart' ? '智能追踪' : '角度聚类')})`);
+    const ms = Math.round(performance.now() - t0);
+    const modeTxt = S.inputMode==='tri' ? '三视图' : '单图';
+    setStatus(`完成: ${S.smoothedCurves.length} 根曲线 · ${modeTxt} · ${ms}ms`);
+    toast(`提取完成：${S.smoothedCurves.length} 根曲线（${ms}ms）`, 'ok');
+  } catch(e) {
+    console.error('extractAll error:', e);
+    setStatus('提取失败: ' + e.message);
+    toast('提取失败: ' + e.message, 'err', 4000);
+  } finally {
+    setBusy('btnExtract', false);
+  }
   }, 50);
 }
 
@@ -3010,6 +3385,160 @@ function editorMouseMove(e) {
 }
 
 function editorMouseUp() { S.dragging = false; S.dragPoint = -1; }
+
+// ============================================================
+// 面片网格生成（沿曲线的交叉面片 / intersecting cards）
+// ============================================================
+const V3 = {
+  sub:(a,b)=>({x:a.x-b.x,y:a.y-b.y,z:a.z-b.z}),
+  add:(a,b)=>({x:a.x+b.x,y:a.y+b.y,z:a.z+b.z}),
+  scale:(a,s)=>({x:a.x*s,y:a.y*s,z:a.z*s}),
+  dot:(a,b)=>a.x*b.x+a.y*b.y+a.z*b.z,
+  cross:(a,b)=>({x:a.y*b.z-a.z*b.y, y:a.z*b.x-a.x*b.z, z:a.x*b.y-a.y*b.x}),
+  len:a=>Math.hypot(a.x,a.y,a.z),
+  norm:a=>{const l=Math.hypot(a.x,a.y,a.z)||1;return {x:a.x/l,y:a.y/l,z:a.z/l};}
+};
+
+// 由2D平滑曲线生成世界坐标3D点（与3D预览同一套深度逻辑，保证所见即所导）
+function buildCurveWorldPoints(cd, idx) {
+  const curve = cd.smoothed;
+  const n = curve.length;
+  const depthProfile = S.curveDepthProfiles ? S.curveDepthProfiles[idx] : null;
+  const rootIsStart = curve[0][0] > curve[n-1][0];
+  const rootPt = rootIsStart ? curve[0] : curve[n-1];
+  const rootXNorm = (rootPt[1] - S.imgW/2) / (S.imgW/2);
+  const baseZOffset = rootXNorm * 150 + Math.sin(idx * 2.3) * 60;
+  const tri = (S.inputMode==='tri' && S.triDepth) ? S.triDepth : null;
+  const depthRange = S.imgW * 0.35; // 三视图深度映射范围
+  const pts = [];
+  for (let pi = 0; pi < n; pi++) {
+    const p = curve[pi];
+    const t = rootIsStart ? (pi/(n-1)) : (1 - pi/(n-1));
+    const x = p[1] - S.imgW/2;
+    const y = p[0] - S.imgH/2;
+    const spread = t*t*(3-2*t);
+    let z;
+    const xN = p[1]/S.imgW, yN = p[0]/S.imgH; // 归一化坐标（图像y向下）
+
+    if (tri && tri.side) {
+      // === 三视图深度重建 ===
+      const zSideN = queryRowTable(tri.side, yN, xN); // side: 行=y, 列=z
+      let zN = (zSideN!=null) ? zSideN : xN;
+      if (tri.top) {
+        const zTopN = queryColTableMedian(tri.top, xN); // top: 列=x, 行=z
+        if (zTopN!=null) zN = 0.7*zN + 0.3*zTopN;
+      }
+      z = (zN - 0.5) * 2 * depthRange;
+    } else {
+      // === 单图：启发式伪深度 ===
+      z = depthProfile ? depthProfile[pi]*1.2 : 0;
+      z += baseZOffset*spread;
+      z += Math.sin(t*Math.PI*2 + idx*1.7)*30*spread;
+    }
+    pts.push({x,y,z,t});
+  }
+  return pts;
+}
+
+// top视图逐列查询：给定xN，返回该列前景行坐标中位数（0..1）
+function queryColTableMedian(table, xN) {
+  if (!table) return null;
+  // table.rows是逐行的，这里转为按列扫描（top不太大，可接受）
+  const x = Math.round(xN*(table.w-1));
+  const vals=[];
+  for (let y=0;y<table.h;y++){
+    // rows[y]存的是该行前景的归一化x；判断是否包含x附近
+    for (const vx of table.rows[y]) {
+      if (Math.abs(vx*(table.w-1) - x) < 3) { vals.push(y/(table.h-1)); break; }
+    }
+  }
+  if (!vals.length) return null;
+  vals.sort((a,b)=>a-b);
+  return vals[Math.floor(vals.length/2)];
+}
+
+// Parallel-transport 稳定标架（避免Frenet在直线段翻转）
+function buildFrames(pts) {
+  const n = pts.length;
+  const T=[],N=[],B=[];
+  for (let i=0;i<n;i++){
+    const a=pts[Math.max(0,i-1)], b=pts[Math.min(n-1,i+1)];
+    T.push(V3.norm(V3.sub(b,a)));
+  }
+  let n0 = V3.cross({x:0,y:0,z:1}, T[0]);
+  if (V3.len(n0) < 1e-4) n0 = V3.cross({x:1,y:0,z:0}, T[0]);
+  N[0] = V3.norm(n0);
+  for (let i=1;i<n;i++){
+    const prev=N[i-1];
+    const d=V3.dot(prev,T[i]);
+    let ni={x:prev.x-d*T[i].x,y:prev.y-d*T[i].y,z:prev.z-d*T[i].z};
+    const l=V3.len(ni);
+    if (l<1e-6){
+      const axis=V3.cross(T[i-1],T[i]);
+      if (V3.len(axis)<1e-6) ni=prev;
+      else ni=V3.norm(V3.cross(V3.norm(axis),T[i]));
+    } else ni=V3.scale(ni,1/l);
+    N[i]=ni;
+  }
+  for (let i=0;i<n;i++) B[i]=V3.norm(V3.cross(T[i],N[i]));
+  return {T,N,B};
+}
+
+// 为一条曲线生成 count 片交叉面片
+// 每片：两列顶点（左右缘），UV: U沿宽度0→1，V沿曲线根→尖 0→1
+function buildCardMesh(worldPts, card) {
+  const n = worldPts.length;
+  if (n < 2) return null;
+  const {N,B} = buildFrames(worldPts);
+  const count = Math.max(1, card.count|0);
+  const crossRad = card.crossAngle * Math.PI/180;
+  const sheets = [];
+  for (let k=0;k<count;k++){
+    let angle;
+    if (count===1) angle=0;
+    else if (count===2) angle = -crossRad/2 + k*crossRad; // 两片夹角=crossAngle
+    else angle = k*Math.PI/count;                          // 多片在180°内均匀
+    const ca=Math.cos(angle), sa=Math.sin(angle);
+    const verts=[];
+    for (let i=0;i<n;i++){
+      const p=worldPts[i];
+      const dx=N[i].x*ca+B[i].x*sa, dy=N[i].y*ca+B[i].y*sa, dz=N[i].z*ca+B[i].z*sa;
+      const w = card.width*(1-card.taper*p.t); // 根部宽、尖端收窄
+      verts.push({x:p.x-dx*w,y:p.y-dy*w,z:p.z-dz*w,u:0,v:p.t});
+      verts.push({x:p.x+dx*w,y:p.y+dy*w,z:p.z+dz*w,u:1,v:p.t});
+    }
+    const tris=[];
+    for (let i=0;i<n-1;i++){
+      const a=i*2,b=i*2+1,c=(i+1)*2,d=(i+1)*2+1;
+      tris.push([a,b,c],[b,d,c]);
+    }
+    sheets.push({verts,tris,angleDeg:angle*180/Math.PI});
+  }
+  return sheets;
+}
+
+// 生成全部曲线的面片网格（世界空间）
+function buildAllCardMeshes() {
+  if (!S.smoothedCurves || !S.smoothedCurves.length) return [];
+  const meshes = [];
+  S.smoothedCurves.forEach((cd, idx) => {
+    const wp = buildCurveWorldPoints(cd, idx);
+    const sheets = buildCardMesh(wp, S.card);
+    if (sheets) meshes.push({ idx, worldPts: wp, sheets });
+  });
+  S.cardMeshes = meshes;
+  return meshes;
+}
+
+// 世界坐标 → 屏幕投影（与draw3DView一致）
+function projectWorld(p, view) {
+  const x1 = p.x*view.cosY + p.z*view.sinY;
+  const z1 = -p.x*view.sinY + p.z*view.cosY;
+  const y1 = p.y*view.cosX - z1*view.sinX;
+  const z2 = p.y*view.sinX + z1*view.cosX;
+  const persp = view.focal/(view.focal + z2*view.sceneScale*0.3);
+  return { x: view.cx + x1*view.sceneScale*persp, y: view.cy + y1*view.sceneScale*persp, z:z2, s:persp };
+}
 
 // ============================================================
 // 3D预览
@@ -3168,6 +3697,48 @@ function draw3DView() {
     }
   }
   ctx.globalAlpha = 1;
+
+  // ===== 面片网格渲染 =====
+  if (S.card.enabled) {
+    const view = { cosX, sinX, cosY, sinY, focal, sceneScale, cx, cy };
+    if (!S.cardMeshes) buildAllCardMeshes();
+    const cardColors = { 1:'rgba(255,215,0,', 2:'rgba(255,165,0,', 3:'rgba(150,130,80,' };
+    const step = 3; // 渲染降频，提升性能
+    for (const mesh of (S.cardMeshes||[])) {
+      const level = S.curveLevels[mesh.idx] || 3;
+      if (!S.showLevels[level-1]) continue;
+      const base = cardColors[level] || cardColors[3];
+      for (const sheet of mesh.sheets) {
+        const V = sheet.verts;
+        const proj = V.map(v => projectWorld(v, view));
+        // 半透明填充
+        if (S.card.fill) {
+          ctx.fillStyle = base + '0.10)';
+          ctx.beginPath();
+          for (let i=0;i<V.length;i+=2*step) {
+            if (i===0) ctx.moveTo(proj[i].x, proj[i].y);
+            else ctx.lineTo(proj[i].x, proj[i].y);
+          }
+          for (let i=V.length-1-(V.length-1)%(2*step);i>=1;i-=2*step) ctx.lineTo(proj[i].x,proj[i].y);
+          ctx.closePath(); ctx.fill();
+        }
+        // 线框（左右缘 + 横向分段线，体现UV网格）
+        if (S.card.wireframe) {
+          ctx.strokeStyle = base + '0.55)';
+          ctx.lineWidth = 0.8;
+          ctx.beginPath();
+          for (let i=0;i<V.length;i+=2) { const q=proj[i]; i===0?ctx.moveTo(q.x,q.y):ctx.lineTo(q.x,q.y); }
+          for (let i=1;i<V.length;i+=2) { const q=proj[i]; i===1?ctx.moveTo(q.x,q.y):ctx.lineTo(q.x,q.y); }
+          ctx.stroke();
+          ctx.beginPath();
+          for (let i=0;i<V.length;i+=2*step) {
+            ctx.moveTo(proj[i].x,proj[i].y); ctx.lineTo(proj[i+1].x,proj[i+1].y);
+          }
+          ctx.stroke();
+        }
+      }
+    }
+  }
 
   // 信息
   ctx.fillStyle = '#666';
@@ -3332,6 +3903,58 @@ function downloadFile(content, filename, type) {
 }
 
 // ============================================================
+// 面片网格导出（含正确UV，无贴图，贴图由UE中指定）
+// ============================================================
+function exportCardOBJ() {
+  if (!S.smoothedCurves || !S.smoothedCurves.length) { toast('请先提取曲线', 'err'); return; }
+  setBusy('btnExportCardOBJ', true, '导出中...');
+  try {
+    if (!S.cardMeshes) buildAllCardMeshes();
+    const meshes = S.cardMeshes;
+    let out = '# Curve Extractor — intersecting cards with UV\n';
+    out += `# ${meshes.length} clusters, ${S.card.count} card(s) each, crossAngle=${S.card.crossAngle}deg, width=${S.card.width}, taper=${S.card.taper}\n`;
+    out += '# v = vertex, vt = UV (U across width 0..1, V root..tip 0..1), f = v/vt\n\n';
+    let vOff = 1, vtOff = 1;
+    let totalVerts = 0, totalFaces = 0;
+    meshes.forEach((mesh, ci) => {
+      mesh.sheets.forEach((sheet, si) => {
+        out += `g cluster_${String(ci+1).padStart(2,'0')}_card_${si+1}\n`;
+        const baseV = vOff, baseVT = vtOff;
+        // 顶点（转OBJ的y-up坐标）
+        for (const v of sheet.verts) {
+          out += `v ${v.x.toFixed(3)} ${(-v.y).toFixed(3)} ${v.z.toFixed(3)}\n`;
+        }
+        // UV
+        for (const v of sheet.verts) {
+          out += `vt ${v.u.toFixed(4)} ${v.v.toFixed(4)}\n`;
+        }
+        // 面（顶点索引/UV索引，同步偏移）
+        for (const tri of sheet.tris) {
+          const f = tri.map(idx => {
+            const gv = baseV + idx, gt = baseVT + idx;
+            return `${gv}/${gt}`;
+          });
+          out += `f ${f.join(' ')}\n`;
+          totalFaces++;
+        }
+        vOff += sheet.verts.length;
+        vtOff += sheet.verts.length;
+        totalVerts += sheet.verts.length;
+        out += '\n';
+      });
+    });
+    downloadFile(out, 'cards_uv.obj', 'text/plain');
+    toast(`已导出 ${meshes.length}簇 × ${S.card.count}片，${totalVerts}顶点 / ${totalFaces}面`, 'ok', 3000);
+    setStatus(`面片OBJ已导出: ${totalVerts}顶点, ${totalFaces}面`);
+  } catch(e) {
+    console.error('Card OBJ export error:', e);
+    toast('导出失败: ' + e.message, 'err');
+  } finally {
+    setBusy('btnExportCardOBJ', false);
+  }
+}
+
+// ============================================================
 // 事件绑定
 // ============================================================
 document.getElementById('uploadZone').addEventListener('click', () => document.getElementById('fileInput').click());
@@ -3466,10 +4089,129 @@ document.getElementById('btnExportSVG').addEventListener('click', exportSVG);
 document.getElementById('btnExportJSON').addEventListener('click', exportJSON);
 document.getElementById('btnExportDXF').addEventListener('click', exportDXF);
 document.getElementById('btnExportOBJ').addEventListener('click', exportOBJ);
+document.getElementById('btnExportCardOBJ').addEventListener('click', exportCardOBJ);
+
+// ============================================================
+// 新增控件事件：背景 / 面片 / 三视图 / 交互反馈
+// ============================================================
+// 背景去除
+document.getElementById('bgEnabled').addEventListener('change', e => {
+  S.bgEnabled = e.target.checked;
+  toast(e.target.checked ? '已开启自动背景去除' : '已关闭背景去除', 'ok', 1500);
+  scheduleReextract();
+});
+document.getElementById('bgTol').addEventListener('input', e => {
+  document.getElementById('bgTolVal').textContent = e.target.value;
+});
+document.getElementById('bgTol').addEventListener('change', () => scheduleReextract());
+
+// 面片参数
+document.getElementById('cardEnabled').addEventListener('change', e => {
+  S.card.enabled = e.target.checked; draw3DView();
+});
+document.getElementById('cardFill').addEventListener('change', e => { S.card.fill = e.target.checked; draw3DView(); });
+document.getElementById('cardWire').addEventListener('change', e => { S.card.wireframe = e.target.checked; draw3DView(); });
+document.querySelectorAll('.card-count-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.card-count-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    S.card.count = parseInt(btn.dataset.count);
+    const labels = {1:'单片',2:'2片·十字',3:'3片·星型',4:'4片·星型'};
+    document.getElementById('cardCountVal').textContent = labels[S.card.count];
+    S.cardMeshes = buildAllCardMeshes();
+    draw3DView();
+    toast(`面片布局：${labels[S.card.count]}`, 'ok', 1400);
+  });
+});
+document.getElementById('crossAngle').addEventListener('input', e => {
+  S.card.crossAngle = parseFloat(e.target.value);
+  document.getElementById('crossAngVal').textContent = e.target.value + '°';
+});
+document.getElementById('crossAngle').addEventListener('change', () => { S.cardMeshes = buildAllCardMeshes(); draw3DView(); });
+document.getElementById('cardWidth').addEventListener('input', e => {
+  S.card.width = parseFloat(e.target.value);
+  document.getElementById('cardWVal').textContent = e.target.value;
+});
+document.getElementById('cardWidth').addEventListener('change', () => { S.cardMeshes = buildAllCardMeshes(); draw3DView(); });
+document.getElementById('cardTaper').addEventListener('input', e => {
+  S.card.taper = parseFloat(e.target.value);
+  document.getElementById('taperVal').textContent = Number(e.target.value).toFixed(2);
+});
+document.getElementById('cardTaper').addEventListener('change', () => { S.cardMeshes = buildAllCardMeshes(); draw3DView(); });
+
+// 单图/三视图模式切换
+function switchInputMode(mode) {
+  S.inputMode = mode;
+  document.getElementById('modeSingle').classList.toggle('active', mode==='single');
+  document.getElementById('modeTri').classList.toggle('active', mode==='tri');
+  document.getElementById('singleInput').style.display = mode==='single' ? 'block' : 'none';
+  document.getElementById('triInput').classList.toggle('show', mode==='tri');
+  toast(mode==='single' ? '单图识别模式' : '三视图识别模式（正面必需）', 'ok', 1600);
+}
+document.getElementById('modeSingle').addEventListener('click', ()=>switchInputMode('single'));
+document.getElementById('modeTri').addEventListener('click', ()=>switchInputMode('tri'));
+
+// 三视图槽位上传
+let _activeTriSlot = null;
+document.querySelectorAll('.tri-slot').forEach(slot => {
+  slot.addEventListener('click', () => {
+    _activeTriSlot = slot.dataset.view;
+    document.getElementById('triFileInput').click();
+  });
+});
+document.getElementById('triFileInput').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file || !_activeTriSlot) return;
+  const view = _activeTriSlot;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const img = new Image();
+    img.onload = () => {
+      const cv = document.createElement('canvas');
+      cv.width = img.width; cv.height = img.height;
+      cv.getContext('2d').drawImage(img,0,0);
+      const rgb = cv.getContext('2d').getImageData(0,0,img.width,img.height);
+      S.triRgb[view] = rgb;
+      S.triImages[view] = img;
+      const slot = document.querySelector(`.tri-slot[data-view="${view}"]`);
+      slot.classList.add('filled');
+      slot.querySelector('.state').textContent = `${img.width}×${img.height} ✓`;
+      // front 同时作为主图
+      if (view==='front') {
+        S.image = img; S.imgW = img.width; S.imgH = img.height;
+        S.rgb = rgb; S._refCanvas = null;
+        const d=rgb.data; let sum=0;
+        for(let i=0;i<d.length;i+=4) sum+=Math.max(d[i],d[i+1],d[i+2])/255;
+        S.invertMask = (sum/(d.length/4))>0.5;
+        drawCanvas('canvasOriginal', rgb);
+      }
+      toast(`${ {front:'正面',side:'侧面',top:'顶面'}[view] }视图已加载`, 'ok');
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+  e.target.value = '';
+});
+
+// 上传区拖拽高亮反馈
+const uz = document.getElementById('uploadZone');
+uz.addEventListener('dragover', e => { e.preventDefault(); uz.classList.add('dragover'); });
+uz.addEventListener('dragleave', () => uz.classList.remove('dragover'));
+uz.addEventListener('drop', () => uz.classList.remove('dragover'));
 
 // 初始化
 try {
   updateParamLabels();
+  // 新增参数标签初始化
+  document.getElementById('bgTolVal').textContent = document.getElementById('bgTol').value;
+  document.getElementById('crossAngVal').textContent = document.getElementById('crossAngle').value + '°';
+  document.getElementById('cardWVal').textContent = document.getElementById('cardWidth').value;
+  document.getElementById('taperVal').textContent = Number(document.getElementById('cardTaper').value).toFixed(2);
+  // 同步S.card与UI初始值
+  S.card.crossAngle = parseFloat(document.getElementById('crossAngle').value);
+  S.card.width = parseFloat(document.getElementById('cardWidth').value);
+  S.card.taper = parseFloat(document.getElementById('cardTaper').value);
+  S.bgEnabled = document.getElementById('bgEnabled').checked;
   init3DInteractions();
   setStatus('就绪 - 加载测试图中...');
 
