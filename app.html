@@ -1310,38 +1310,8 @@ function reconstructZTwoSurface(frontPts) {
 }
 
 function reconstructZThreeView(frontPts) {
-  // 侧面决定 Z（侧视才能叠上侧面图）；顶面只在侧面同一高度有多个 Z 时破歧义
-  const fromSide = reconstructZTwoSurface(frontPts);
-  const align = S.triAlign || computeTriAlign();
-  const flip = !!S._topZFlip;
-  const n = frontPts.length;
-  const zN = new Float32Array(n);
-  let prev = fromSide[0];
-  for (let i = 0; i < n; i++) {
-    const yImg = frontPts[i][0] / S.imgH;
-    const xImg = frontPts[i][1] / S.imgW;
-    const ySide = mapNorm(yImg, align.front.yminN, align.front.ymaxN, align.sideY.yminN, align.sideY.ymaxN);
-    const xTop = mapNorm(xImg, align.front.xminN, align.front.xmaxN, align.topX.xminN, align.topX.xmaxN);
-    const sideC = zCandsAtY(S.triDepth && S.triDepth.side, ySide, 4);
-    let topC = zCandsAtX(S.triTopCols, xTop, 4);
-    if (flip) topC = topC.map(z => 1 - z);
-    const pool = sideC.length ? sideC : (topC.length ? topC : [fromSide[i]]);
-    let best = fromSide[i], bestS = 1e9;
-    for (let k = 0; k < pool.length; k++) {
-      let tpen = 0;
-      if (sideC.length && topC.length) {
-        tpen = 1;
-        for (let t = 0; t < topC.length; t++) tpen = Math.min(tpen, Math.abs(pool[k] - topC[t]));
-      }
-      const toSide = Math.abs(pool[k] - fromSide[i]);
-      const cont = prev == null ? 0 : Math.abs(pool[k] - prev);
-      const s = toSide * 1.2 + cont * 0.8 + tpen * 0.5;
-      if (s < bestS) { bestS = s; best = pool[k]; }
-    }
-    zN[i] = best;
-    prev = best;
-  }
-  return smooth1D(zN, 10);
+  // 侧面整根曲线决定 Z，侧视才能落在侧面图上；顶面不另开一套 Z，避免三张图互相拉歪
+  return reconstructZTwoSurface(frontPts);
 }
 
 function extractGoldenMask() {
@@ -4257,7 +4227,7 @@ function brightRefFromRgb(rgb) {
     dst[i] = Math.min(255, Math.round(src[i] * 1.15 + 40));
     dst[i + 1] = Math.min(255, Math.round(src[i + 1] * 1.15 + 40));
     dst[i + 2] = Math.min(255, Math.round(src[i + 2] * 1.05 + 30));
-    dst[i + 3] = Math.min(255, 80 + lift);
+    dst[i + 3] = Math.min(255, 140 + lift);
   }
   cv.getContext('2d').putImageData(out, 0, 0);
   return cv;
@@ -4307,32 +4277,27 @@ function drawRefImagePlane(ctx, view) {
   if (!S.showRefImage) return;
   const which = currentOrthoView();
   const depthRange = S.imgW * 0.35;
-  const align = S.triAlign || { front: { yminN: 0, ymaxN: 1, xminN: 0, xmaxN: 1 }, sideY: { yminN: 0, ymaxN: 1 }, topX: { xminN: 0, xmaxN: 1 } };
   if (which === 'side' && S.triRgb && S.triRgb.side) {
     if (!S._refSide) S._refSide = brightRefFromRgb(S.triRgb.side);
     const rgb = S.triRgb.side;
-    drawRefTiles(ctx, view, S._refSide, (sx, sy) => {
-      const ySideN = sy / Math.max(1, rgb.height - 1);
-      const yFrontN = mapNorm(ySideN, align.sideY.yminN, align.sideY.ymaxN, align.front.yminN, align.front.ymaxN);
-      return {
-        x: 0,
-        y: yFrontN * (S.imgH - 1) - S.imgH / 2,
-        z: (sx / Math.max(1, rgb.width - 1) - 0.5) * 2 * depthRange
-      };
-    });
+    const sw = Math.max(1, rgb.width - 1), sh = Math.max(1, rgb.height - 1);
+    drawRefTiles(ctx, view, S._refSide, (sx, sy) => ({
+      x: 0,
+      y: (sy / sh) * (S.imgH - 1) - S.imgH / 2,
+      z: (sx / sw - 0.5) * 2 * depthRange
+    }));
     return;
   }
   if (which === 'top' && S.triRgb && S.triRgb.top) {
     if (!S._refTop) S._refTop = brightRefFromRgb(S.triRgb.top);
     const rgb = S.triRgb.top;
+    const tw = Math.max(1, rgb.width - 1), th = Math.max(1, rgb.height - 1);
     const flip = !!S._topZFlip;
     drawRefTiles(ctx, view, S._refTop, (tx, ty) => {
-      const xTopN = tx / Math.max(1, rgb.width - 1);
-      const xFrontN = mapNorm(xTopN, align.topX.xminN, align.topX.xmaxN, align.front.xminN, align.front.xmaxN);
-      let zN = ty / Math.max(1, rgb.height - 1);
+      let zN = ty / th;
       if (flip) zN = 1 - zN;
       return {
-        x: xFrontN * (S.imgW - 1) - S.imgW / 2,
+        x: (tx / tw) * (S.imgW - 1) - S.imgW / 2,
         y: 0,
         z: (zN - 0.5) * 2 * depthRange
       };
