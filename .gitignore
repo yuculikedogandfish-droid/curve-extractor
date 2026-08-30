@@ -39,4 +39,8 @@ embed_image.py
 
 # Local tri-view test assets & intermediate artifacts (base64 dumps, source images, debug pngs)
 input/tri/
+input/tri_labeled/debug/
 _c.js
+
+# Archive (legacy Python version, historical debug screenshots)
+archive/

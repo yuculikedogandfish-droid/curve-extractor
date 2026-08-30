@@ -1,109 +1,64 @@
 # Curve Extractor — 金色光带曲线提取工具
 
-从发光流线图像中**准确识别曲线布局**，生成**数学上平滑的矢量曲线**（SVG/JSON），用于 3D 面片枝条生长动画。
+网页端工具：从发光枝条/光效图中自动识别曲线走向，生成平滑矢量曲线，并在曲线上生成十字交叉面片（Plane），导出 FBX/OBJ 导入 UE 做枝条生长动画。
 
-## 核心方法
+## 快速开始
 
-```
-原图 → HSV金色掩码 → 形态学固化(填补空洞+合并丝缕) → 骨架化 → 修剪毛刺
-     → 多源BFS最短路径(从底部根区域) → 端点角度聚类(5组) → B样条平滑
-     → 导出 SVG / JSON
-```
+直接用浏览器打开 `app.html` 即可，无需安装任何依赖。
 
-### 为什么不用直接追踪？
-光带内部有丝缕纹理和空洞，骨架化后中心区域形成复杂网状结构，像素级追踪会在交点处迷路。BFS 最短路径 + 角度聚类能稳定区分 5 根主枝条。
+线上地址：https://yuculikedogandfish-droid.github.io/curve-extractor/app.html
 
-## 工作区结构
+## 功能
+
+- **单图识别**：上传一张正面图，自动提取曲线
+- **三视图识别**：上传正面/侧面/顶面，三角测量还原 3D 曲线（支持拖拽上传）
+- **交互式曲线编辑**：拖拽曲线上的控制点调整走向
+- **3D 面片预览**：沿曲线中心轴生成面片（1/2/3/4 片可选），UV 正确
+- **多格式导出**：FBX / OBJ / JSON / SVG / DXF
+
+## 使用流程
+
+1. 选择单图或三视图模式，上传图片
+2. 点"提取曲线"，查看各阶段预览（掩码→骨架→曲线→3D）
+3. 调整左侧参数（亮度阈值、形态学、面片宽度等）优化效果
+4. 在曲线编辑器里手动微调走向
+5. 导出 FBX，导入 UE
+
+## 技术栈
+
+- 纯前端单文件（`app.html`），HTML + CSS + JS，无外部依赖
+- 3D 预览用 Canvas 2D 自绘投影（不用 Three.js）
+- 图像处理：HSV 掩码、形态学、Zhang-Suen 骨架化、BFS、B 样条
+- 部署：GitHub Pages，push 到 master 自动部署
+
+## 项目结构
 
 ```
 curve-extractor/
-├── input/
-│   └── original.png          # 原始参考图
-├── src/
-│   ├── preprocess.py         # 图像预处理：掩码、固化、骨架化、修剪
-│   ├── trace_angle.py        # 多源BFS + 角度聚类（稳定版核心）
-│   └── smooth.py             # B样条平滑拟合
-├── scripts/
-│   └── extract_v07.py        # v0.7 主入口（推荐使用）
-├── output/
-│   └── v0.7/                 # 产物：SVG / JSON / 预览图
-├── .gitignore
-└── README.md
+├── app.html              # 主文件（唯一需要编辑的）
+├── HANDOFF.md            # 交接文档（详细模块说明，给 Cursor 用）
+├── index.html            # Pages 入口
+├── input/                # 测试素材
+│   ├── run_tri.py        # 自动化测试脚本
+│   ├── tri/              # 两组三视图素材
+│   └── tri_labeled/      # 处理后的测试素材（processed_nolabel/ 推荐用）
+└── archive/              # 旧版本归档（不要动）
 ```
 
-## 版本历史
+## 开发
 
-| 版本 | 方法 | 曲线数 | 问题 |
-|------|------|--------|------|
-| v0.1 | 简单骨架追踪 | 39条碎曲线 | 丝缕纹理导致大量分支 |
-| v0.2 | +形态学固化 | 16条 | 中心交点处截断 |
-| v0.3 | +交点穿越 | 8条 | 中心网状结构迷路 |
-| v0.4 | +目标点引导 | 8条 | 交点数耗尽 |
-| v0.5 | BFS最短路径 | 4条 | 去重太激进 |
-| v0.6 | 宽松去重 | 3条 | 根区域过大 |
-| **v0.7** | **BFS + 角度聚类** | **5根主枝条** | **稳定版 ✓** |
-
-## 环境依赖
+详细的模块说明、函数索引、参数表、版本历史见 **[HANDOFF.md](./HANDOFF.md)**。
 
 ```bash
-pip install numpy scipy scikit-image pillow matplotlib
+# 本地预览：直接双击 app.html
+# 部署：
+git add app.html
+git commit -m "改动说明"
+git push origin master
 ```
 
-## 使用方法
+## 当前版本
 
-```bash
-# 运行稳定版（v0.7）
-python scripts/extract_v07.py
+**v1.4** — 算法回滚到 v1.1（稳定版）+ 三视图拖拽上传。
 
-# 输出在 output/v0.7/
-#   curves_5branches.svg   — 5根曲线的矢量SVG
-#   curves_5branches.json  — 曲线点坐标数据（可导入Blender/C4D）
-#   preview.png            — 预览对比图
-```
-
-## JSON 数据格式
-
-```json
-{
-  "version": "v0.7",
-  "curve_count": 5,
-  "curves": [
-    {
-      "key": "right_lower",
-      "name": "右下卷曲枝",
-      "point_count": 800,
-      "total_length_px": 1234.56,
-      "endpoint_xy": [x, y],
-      "points": [[x1, y1], [x2, y2], ...]
-    }
-  ]
-}
-```
-
-## 5根主枝条
-
-1. **左上大枝** — 向左上方舒展的长光带
-2. **左下卷曲枝** — 向左下方回旋卷曲的枝条
-3. **中间主干** — 中心汇聚向上的主根
-4. **右上大枝** — 向右上方舒展的长光带
-5. **右下卷曲枝** — 向右下方回旋卷曲的枝条
-
-## 3D 使用示例（Blender Python）
-
-```python
-import json, bpy
-
-data = json.load(open("output/v0.7/curves_5branches.json"))
-for curve in data["curves"]:
-    pts = [(p[0] * 0.01, p[1] * 0.01, 0) for p in curve["points"]]
-    # 创建曲线对象并设置点...
-    print(f"{curve['name']}: {curve['point_count']} points")
-```
-
-## Git 版本管理
-
-```bash
-git tag               # 查看所有版本标签
-git log --oneline     # 查看提交历史
-git checkout <tag>    # 回滚到指定版本
-```
+详见 HANDOFF.md 的版本历史。
