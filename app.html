@@ -453,7 +453,7 @@ const S = {
   dragging: false, dragPoint: -1,
   traceMode: 'of', // 'of' = 方向场追踪, 'smart' = 智能端点追踪, 'angle' = 固定5根角度聚类
   // 3D预览相关
-  view3d: { rotX: -0.3, rotY: 0.1, zoom: 1.0, dragging: false, lastX: 0, lastY: 0 },
+  view3d: { rotX: -0.3, rotY: 0.1, zoom: 1.0, dragging: false, lastX: 0, lastY: 0, preset: null },
   // 3D编辑
   edit3d: {
     enabled: false,      // 编辑模式开关
@@ -1310,44 +1310,38 @@ function reconstructZTwoSurface(frontPts) {
 }
 
 function reconstructZThreeView(frontPts) {
+  // 侧面决定 Z（侧视才能叠上侧面图）；顶面只在侧面同一高度有多个 Z 时破歧义
+  const fromSide = reconstructZTwoSurface(frontPts);
   const align = S.triAlign || computeTriAlign();
   const flip = !!S._topZFlip;
   const n = frontPts.length;
   const zN = new Float32Array(n);
-  let prev = null;
+  let prev = fromSide[0];
   for (let i = 0; i < n; i++) {
     const yImg = frontPts[i][0] / S.imgH;
     const xImg = frontPts[i][1] / S.imgW;
     const ySide = mapNorm(yImg, align.front.yminN, align.front.ymaxN, align.sideY.yminN, align.sideY.ymaxN);
     const xTop = mapNorm(xImg, align.front.xminN, align.front.xmaxN, align.topX.xminN, align.topX.xmaxN);
-    const sideC = zCandsAtY(S.triDepth && S.triDepth.side, ySide, 5);
-    let topC = zCandsAtX(S.triTopCols, xTop, 5);
+    const sideC = zCandsAtY(S.triDepth && S.triDepth.side, ySide, 4);
+    let topC = zCandsAtX(S.triTopCols, xTop, 4);
     if (flip) topC = topC.map(z => 1 - z);
-    const pool = [];
-    for (let k = 0; k < sideC.length; k++) {
-      let tpen = 0.55;
-      for (let t = 0; t < topC.length; t++) tpen = Math.min(tpen, Math.abs(sideC[k] - topC[t]));
-      pool.push({ z: sideC[k], tpen });
-    }
-    for (let k = 0; k < topC.length; k++) {
-      let spen = 0.55;
-      for (let s = 0; s < sideC.length; s++) spen = Math.min(spen, Math.abs(topC[k] - sideC[s]));
-      pool.push({ z: topC[k], tpen: spen });
-    }
-    if (!pool.length) {
-      zN[i] = prev != null ? prev : 0.5;
-      continue;
-    }
-    let best = pool[0].z, bestS = 1e9;
+    const pool = sideC.length ? sideC : (topC.length ? topC : [fromSide[i]]);
+    let best = fromSide[i], bestS = 1e9;
     for (let k = 0; k < pool.length; k++) {
-      const cont = prev == null ? 0 : Math.abs(pool[k].z - prev);
-      const s = cont + 1.1 * pool[k].tpen;
-      if (s < bestS) { bestS = s; best = pool[k].z; }
+      let tpen = 0;
+      if (sideC.length && topC.length) {
+        tpen = 1;
+        for (let t = 0; t < topC.length; t++) tpen = Math.min(tpen, Math.abs(pool[k] - topC[t]));
+      }
+      const toSide = Math.abs(pool[k] - fromSide[i]);
+      const cont = prev == null ? 0 : Math.abs(pool[k] - prev);
+      const s = toSide * 1.2 + cont * 0.8 + tpen * 0.5;
+      if (s < bestS) { bestS = s; best = pool[k]; }
     }
     zN[i] = best;
     prev = best;
   }
-  return smooth1D(zN, 8);
+  return smooth1D(zN, 10);
 }
 
 function extractGoldenMask() {
@@ -3977,6 +3971,7 @@ function extractAll() {
     S.curveEdits = {}; S.edit3d.selected=-1; S.edit3d.dragHandle=-1;
     try { S.cardMeshes = buildAllCardMeshes(); } catch(e) { console.error('Card mesh error:', e); }
     if (S.inputMode === 'tri') {
+      S.view3d.preset = 'front';
       S.view3d.rotX = 0;
       S.view3d.rotY = 0;
     }
@@ -4243,7 +4238,8 @@ function projectWorld(p, view) {
   const z1 = -p.x*view.sinY + p.z*view.cosY;
   const y1 = p.y*view.cosX - z1*view.sinX;
   const z2 = p.y*view.sinX + z1*view.cosX;
-  const persp = view.focal/(view.focal + z2*view.sceneScale*0.3);
+  // 正/侧/俯必须正交：透视会让不同深度的点错位，黄线永远叠不在参照图上
+  const persp = view.ortho ? 1 : view.focal/(view.focal + z2*view.sceneScale*0.3);
   return { x: view.cx + x1*view.sceneScale*persp, y: view.cy + y1*view.sceneScale*persp, z:z2, s:persp };
 }
 
@@ -4300,6 +4296,7 @@ function drawRefTiles(ctx, view, canvas, toWorld) {
 }
 
 function currentOrthoView() {
+  if (S.view3d.preset === 'side' || S.view3d.preset === 'top' || S.view3d.preset === 'front') return S.view3d.preset;
   const { rotX, rotY } = S.view3d;
   if (Math.abs(rotX + Math.PI / 2) < 0.4) return 'top';
   if (Math.abs(Math.abs(rotY) - Math.PI / 2) < 0.4 && Math.abs(rotX) < 0.4) return 'side';
@@ -4370,7 +4367,11 @@ function draw3DView() {
 
   // 3D场景以图片坐标为基准，缩放到适应容器
   const cx = W / 2, cy = H / 2;
+  if (S.view3d.preset === 'front') { S.view3d.rotX = 0; S.view3d.rotY = 0; }
+  else if (S.view3d.preset === 'side') { S.view3d.rotX = 0; S.view3d.rotY = Math.PI / 2; }
+  else if (S.view3d.preset === 'top') { S.view3d.rotX = -Math.PI / 2; S.view3d.rotY = 0; }
   const { rotX, rotY, zoom } = S.view3d;
+  const useOrtho = !!S.view3d.preset;
   // 自动缩放：让图片尺寸适应容器
   const baseScale = Math.min(W / S.imgW, H / S.imgH) * 1.1;
   const focal = 800 * zoom;
@@ -4384,7 +4385,7 @@ function draw3DView() {
   const groundY = S.imgH * 0.88;
 
   // 统一视图参数（曲线线框与面片共用，保证面片严格以曲线为中心轴）
-  const view = { cosX, sinX, cosY, sinY, focal, sceneScale, cx, cy };
+  const view = { cosX, sinX, cosY, sinY, focal, sceneScale, cx, cy, ortho: useOrtho };
 
   // 为每条曲线生成世界3D点并投影（与面片网格同源，绝不偏移）
   const curves3d = S.smoothedCurves.map((cd, idx) => {
@@ -4499,7 +4500,7 @@ function draw3DView() {
   // 信息
   ctx.fillStyle = '#666';
   ctx.font = '12px monospace';
-  ctx.fillText(`旋转: X=${rotX.toFixed(2)} Y=${rotY.toFixed(2)} 缩放=${zoom.toFixed(2)}`, 10, 20);
+  ctx.fillText(`旋转: X=${rotX.toFixed(2)} Y=${rotY.toFixed(2)} 缩放=${zoom.toFixed(2)} ${useOrtho ? '正交' : '透视'}`, 10, 20);
   const l1 = S.curveLevels.filter(l=>l===1).length;
   const l2 = S.curveLevels.filter(l=>l===2).length;
   const l3 = S.curveLevels.filter(l=>l===3).length;
@@ -4669,6 +4670,7 @@ function init3DInteractions() {
     }
     const dx = e.clientX - S.view3d.lastX;
     const dy = e.clientY - S.view3d.lastY;
+    S.view3d.preset = null;
     S.view3d.rotY += dx * 0.01;
     S.view3d.rotX += dy * 0.01;
     S.view3d.rotX = Math.max(-Math.PI/2, Math.min(Math.PI/2, S.view3d.rotX));
@@ -4709,6 +4711,7 @@ function init3DInteractions() {
       setOrthoView(S.inputMode === 'tri' ? 'front' : 'free');
     });
     function setOrthoView(which) {
+      S.view3d.preset = (which === 'free') ? null : which;
       if (which === 'front') { S.view3d.rotX = 0; S.view3d.rotY = 0; }
       else if (which === 'side') { S.view3d.rotX = 0; S.view3d.rotY = Math.PI / 2; }
       else if (which === 'top') { S.view3d.rotX = -Math.PI / 2; S.view3d.rotY = 0; }
@@ -4723,7 +4726,7 @@ function init3DInteractions() {
         el.style.background = on ? '#3a3200' : '#2a2a2a';
       });
       const hint = document.getElementById('hint3d');
-      if (hint && !S.edit3d.enabled) hint.textContent = which === 'free' ? '拖拽旋转视角 | 滚轮缩放' : (names[which] + ' · 黄线应叠在参照图上');
+      if (hint && !S.edit3d.enabled) hint.textContent = which === 'free' ? '拖拽旋转视角 | 滚轮缩放' : (names[which] + ' · 正交 · 黄线应叠在参照图上');
       draw3DView();
       toast(names[which] || '视角已重置', 'info', 1400);
     }
