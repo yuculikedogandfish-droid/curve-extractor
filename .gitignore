@@ -36,3 +36,7 @@ input/*_b64.txt
 # Temp scripts
 convert_b64.py
 embed_image.py
+
+# Local tri-view test assets & intermediate artifacts (base64 dumps, source images, debug pngs)
+input/tri/
+_c.js
