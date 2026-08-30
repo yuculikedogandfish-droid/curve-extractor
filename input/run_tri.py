@@ -1,5 +1,5 @@
 import seed_browser_use as bu, time, json, base64, sys
-VER='109'
+VER='208'
 bu.navigate(f"file:///H:/tool/curve-extractor/app.html?v={VER}");time.sleep(8)
 bu.js("""
 window.loadTriDataURL=function(view,dataURL){return new Promise((res,rej)=>{const img=new Image();
