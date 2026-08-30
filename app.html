@@ -277,11 +277,18 @@
       <div class="section-title">4. 曲线追踪</div>
       <div class="form-group">
         <label>追踪模式</label>
-        <div style="display:flex;gap:8px;margin-top:4px;">
-          <button id="modeSmart" class="btn btn-sm" style="flex:1;background:#FFD700;color:#000;">智能追踪</button>
+        <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;">
+          <button id="modeOF" class="btn btn-sm" style="flex:1;background:#FFD700;color:#000;">方向场</button>
+          <button id="modeSmart" class="btn btn-sm" style="flex:1;background:#333;">智能追踪</button>
           <button id="modeAngle" class="btn btn-sm" style="flex:1;background:#333;">角度聚类</button>
         </div>
-        <div style="font-size:11px;color:#888;margin-top:4px;">智能：自动检测所有曲线（复杂图推荐）<br>角度：固定5根主枝条（简单图用）</div>
+        <div style="font-size:11px;color:#888;margin-top:4px;">方向场：可跨间隙（当前默认）<br>智能：端点+交叉点追踪<br>角度：固定5根主枝条</div>
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" id="connectV2" checked> 改进短段连接
+        </label>
+        <div style="font-size:11px;color:#888;margin-top:2px;">两端配对并按走向衔接断裂曲线。取消则回退 v1.1 连接逻辑</div>
       </div>
       <div class="form-group">
         <label>根区域 Y 比例 <span class="val" id="rootYVal">0.72</span></label>
@@ -2603,6 +2610,88 @@ function connectShortSegments(curves, w, h) {
   return result;
 }
 
+// v1.4+ 短段连接：四端点配对 + 按行进方向衔接（修复 v1.1 点积方向反了、只接尾接头）
+function connectShortSegmentsV2(curves, w, h) {
+  if (curves.length <= 1) return curves;
+
+  const maxConnectDist = Math.max(15, Math.round(Math.min(w, h) / 50));
+  const minDot = Math.cos(Math.PI / 3); // 60°
+  const segs = curves.map(c => c.slice());
+  const used = new Uint8Array(segs.length);
+  const order = segs.map((_, i) => i).sort((a, b) => segs[b].length - segs[a].length);
+  const result = [];
+
+  function travelDir(curve, end) {
+    const n = Math.min(10, curve.length - 1);
+    if (n < 1) return [1, 0];
+    let p0, p1;
+    if (end === 1) {
+      p0 = curve[curve.length - 1 - n];
+      p1 = curve[curve.length - 1];
+    } else {
+      p0 = curve[0];
+      p1 = curve[n];
+    }
+    const dx = p1[1] - p0[1], dy = p1[0] - p0[0];
+    const mag = Math.hypot(dx, dy) || 1;
+    return [dx / mag, dy / mag];
+  }
+
+  function endPt(curve, end) {
+    return end === 1 ? curve[curve.length - 1] : curve[0];
+  }
+
+  function tryAttach(merged) {
+    for (const oj of order) {
+      if (used[oj]) continue;
+      const other = segs[oj];
+      let best = null, bestDist = maxConnectDist + 1;
+      for (const ourEnd of [0, 1]) {
+        for (const theirEnd of [0, 1]) {
+          const a = endPt(merged, ourEnd);
+          const b = endPt(other, theirEnd);
+          const dist = Math.hypot(a[1] - b[1], a[0] - b[0]);
+          if (dist > maxConnectDist) continue;
+          let da = travelDir(merged, ourEnd);
+          let db = travelDir(other, theirEnd);
+          // 统一成 first.tail → second.head：两端相同则翻转 other
+          if (ourEnd === 0) da = [-da[0], -da[1]];
+          if (ourEnd === theirEnd) db = [-db[0], -db[1]];
+          const dot = da[0] * db[0] + da[1] * db[1];
+          if (dot < minDot) continue;
+          if (dist < bestDist) {
+            bestDist = dist;
+            best = { ourEnd, theirEnd };
+          }
+        }
+      }
+      if (!best) continue;
+      let B = other;
+      if (best.ourEnd === best.theirEnd) B = other.slice().reverse();
+      const next = best.ourEnd === 1 ? merged.concat(B) : B.concat(merged);
+      used[oj] = 1;
+      return { merged: next, changed: true };
+    }
+    return { merged, changed: false };
+  }
+
+  for (const ci of order) {
+    if (used[ci]) continue;
+    let merged = segs[ci].slice();
+    used[ci] = 1;
+    let changed = true;
+    while (changed) {
+      const r = tryAttach(merged);
+      merged = r.merged;
+      changed = r.changed;
+    }
+    result.push(merged);
+  }
+
+  console.log(`[ConnectV2] ${curves.length} -> ${result.length} 条曲线`);
+  return result;
+}
+
 // 获取曲线端点的方向（取最后/最前N个点）
 function getEndDirection(curve, end) {
   const n = Math.min(10, curve.length - 1);
@@ -3095,7 +3184,8 @@ function extractCurvesOrientationField(imageData, w, h, brightness, mask, minBri
   }
 
   console.log(`[OF Trace] 追踪到 ${curves.length} 条曲线，开始连接短段...`);
-  const connected = connectShortSegments(curves, w, h);
+  const useV2 = !(document.getElementById('connectV2')) || document.getElementById('connectV2').checked;
+  const connected = useV2 ? connectShortSegmentsV2(curves, w, h) : connectShortSegments(curves, w, h);
   console.log(`[OF Trace] 最终 ${connected.length} 条曲线`);
   return connected;
 }
@@ -4235,21 +4325,33 @@ document.getElementById('uploadZone').addEventListener('dragover', e => { e.prev
 document.getElementById('uploadZone').addEventListener('drop', e => { e.preventDefault(); if (e.dataTransfer.files[0]) loadImage(e.dataTransfer.files[0]); });
 
 // 追踪模式切换
+function setTraceModeUI(mode) {
+  const styles = { on: ['#FFD700', '#000'], off: ['#333', ''] };
+  [['modeOF', 'of'], ['modeSmart', 'smart'], ['modeAngle', 'angle']].forEach(([id, m]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const on = mode === m;
+    el.style.background = on ? styles.on[0] : styles.off[0];
+    el.style.color = on ? styles.on[1] : styles.off[1];
+  });
+}
+document.getElementById('modeOF').addEventListener('click', () => {
+  S.traceMode = 'of';
+  setTraceModeUI('of');
+  setStatus('模式: 方向场追踪（可跨间隙）');
+});
 document.getElementById('modeSmart').addEventListener('click', () => {
   S.traceMode = 'smart';
-  document.getElementById('modeSmart').style.background = '#FFD700';
-  document.getElementById('modeSmart').style.color = '#000';
-  document.getElementById('modeAngle').style.background = '#333';
-  document.getElementById('modeAngle').style.color = '';
+  setTraceModeUI('smart');
   setStatus('模式: 智能追踪（自动检测所有曲线）');
 });
 document.getElementById('modeAngle').addEventListener('click', () => {
   S.traceMode = 'angle';
-  document.getElementById('modeAngle').style.background = '#FFD700';
-  document.getElementById('modeAngle').style.color = '#000';
-  document.getElementById('modeSmart').style.background = '#333';
-  document.getElementById('modeSmart').style.color = '';
+  setTraceModeUI('angle');
   setStatus('模式: 角度聚类（固定5根主枝条）');
+});
+document.getElementById('connectV2').addEventListener('change', () => {
+  if (S.image) scheduleReextract();
 });
 
 // 实时预览：参数变化后自动重新提取（防抖）
