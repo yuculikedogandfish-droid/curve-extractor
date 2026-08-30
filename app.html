@@ -228,6 +228,12 @@
     <div class="section">
       <div class="section-title">2. HSV 掩码</div>
       <div class="form-group">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" id="lineEnhance" checked> 线稿增强（白线黑底）
+        </label>
+        <div style="font-size:11px;color:#888;margin-top:2px;">自动识别线稿：放宽亮度、先闭运算再接虚线。金色光带图不会触发</div>
+      </div>
+      <div class="form-group">
         <label>色相范围 <span class="val" id="hueVal">0.05 - 0.17</span></label>
         <input type="range" id="hueMin" min="0" max="0.5" step="0.01" value="0.05">
         <input type="range" id="hueMax" min="0" max="0.5" step="0.01" value="0.17" style="margin-top:4px;">
@@ -242,7 +248,7 @@
       </div>
       <div class="form-group">
         <label>亮度兜底阈值 <span class="val" id="brightVal">0.70</span></label>
-        <input type="range" id="brightThresh" min="0.5" max="1" step="0.05" value="0.70">
+        <input type="range" id="brightThresh" min="0.15" max="1" step="0.05" value="0.70">
       </div>
       <div class="form-group">
         <label>亮度分层阈值 <span class="val" id="layerVal">0.30</span></label>
@@ -458,6 +464,7 @@ const S = {
   showRefImage: true,
   showLevels: [true, true, true], // 是否显示一/二/三级曲线
   invertMask: false, // 浅色背景时自动反转掩码
+  lineDrawing: false, // 白线黑底线稿（自动检测）
   // 背景去除
   bgEnabled: true,       // 是否启用自动背景去除
   bgMask: null,          // 背景mask（1=背景，需剔除）
@@ -626,6 +633,46 @@ function rgb2hsv(r, g, b) {
   return [h, s, v];
 }
 
+function lineEnhanceEnabled() {
+  const cb = document.getElementById('lineEnhance');
+  return !cb || cb.checked;
+}
+
+function detectLineDrawing(rgb) {
+  if (!rgb) return false;
+  const d = rgb.data, N = rgb.width * rgb.height;
+  let dark = 0, fg = 0, satSum = 0;
+  for (let i = 0; i < N; i++) {
+    const r = d[i*4], g = d[i*4+1], b = d[i*4+2];
+    const mx = Math.max(r, g, b);
+    if (mx < 18) dark++;
+    else {
+      fg++;
+      const mn = Math.min(r, g, b);
+      satSum += (mx - mn) / mx;
+    }
+  }
+  const darkRatio = dark / N;
+  const meanSat = fg ? satSum / fg : 1;
+  const hit = darkRatio > 0.90 && meanSat < 0.20 && fg > 200;
+  console.log(`[LineDetect] dark=${(darkRatio*100).toFixed(1)}% fg=${fg} sat=${meanSat.toFixed(3)} → ${hit}`);
+  return hit;
+}
+
+function lineBrightThresh(p) {
+  return Math.min(p.brightThresh, 0.22);
+}
+
+function foregroundFromHsv(hue, sat, val, p, lineDrawing) {
+  if (lineDrawing) return val >= lineBrightThresh(p) ? 1 : 0;
+  const hueMask = hue >= p.hueMin && hue <= p.hueMax;
+  const satMask = sat >= p.satMin;
+  const valMask = val >= p.valMin;
+  const brightMask = val >= p.brightThresh;
+  const layerMask = val >= p.brightLayer;
+  return ((hueMask && satMask && valMask) || brightMask) && layerMask ? 1 : 0;
+}
+
 // ============================================================
 // 0. 非纯色背景自动去除
 // ============================================================
@@ -740,12 +787,13 @@ function computeMaskFromRgb(rgb, w, h, invert) {
     localBg=[med(0),med(1),med(2)];
   }
   const tol = parseFloat((document.getElementById('bgTol')||{}).value||60);
+  const line = !!S.lineDrawing;
   for (let i=0;i<w*h;i++){
     const r=data[i*4],g=data[i*4+1],b=data[i*4+2];
     const [hue,sat,val]=rgb2hsv(r,g,b);
-    let m = (((hue>=p.hueMin&&hue<=p.hueMax)&&sat>=p.satMin&&val>=p.valMin)||val>=p.brightThresh)&&val>=p.brightLayer ?1:0;
+    let m = foregroundFromHsv(hue, sat, val, p, line);
     if (invert) m = m?0:1;
-    if (localBg && colorDist(r,g,b,localBg[0],localBg[1],localBg[2]) < tol) m=0;
+    if (!line && localBg && colorDist(r,g,b,localBg[0],localBg[1],localBg[2]) < tol) m=0;
     mask[i]=m;
   }
   return mask;
@@ -803,14 +851,9 @@ function extractGoldenMask() {
     const r = data[i*4], g = data[i*4+1], b = data[i*4+2];
     const [hue, sat, val] = rgb2hsv(r, g, b);
     brightness[i] = val;
-    const hueMask = hue >= p.hueMin && hue <= p.hueMax;
-    const satMask = sat >= p.satMin;
-    const valMask = val >= p.valMin;
-    const brightMask = val >= p.brightThresh;
-    const layerMask = val >= p.brightLayer; // 亮度分层
-    let m = ((hueMask && satMask && valMask) || brightMask) && layerMask ? 1 : 0;
+    let m = foregroundFromHsv(hue, sat, val, p, S.lineDrawing);
     if (S.invertMask) m = m ? 0 : 1; // 浅色背景反转：暗线条为目标
-    if (S.bgEnabled && S.bgMask && S.bgMask[i]) m = 0; // 剔除自动检测到的背景
+    if (!S.lineDrawing && S.bgEnabled && S.bgMask && S.bgMask[i]) m = 0; // 剔除自动检测到的背景
     mask[i] = m;
   }
   S.mask = mask;
@@ -869,7 +912,13 @@ function autoAdaptParams() {
   // 3. 自适应调整参数
   let closeRadius, dilateRadius, minObjectSize, pruneLength, minPathLength;
 
-  if (totalComponents <= 3) {
+  if (S.lineDrawing) {
+    closeRadius = Math.max(5, Math.round(6 * scaleFactor));
+    dilateRadius = 1;
+    minObjectSize = Math.max(20, Math.round(30 * scaleFactor));
+    pruneLength = Math.max(4, Math.round(6 * scaleFactor));
+    minPathLength = Math.max(15, Math.round(20 * scaleFactor));
+  } else if (totalComponents <= 3) {
     // 少量大连通块：曲线比较完整，用小的形态学参数
     closeRadius = Math.max(1, Math.round(2 * scaleFactor));
     dilateRadius = 0;
@@ -981,10 +1030,11 @@ function removeSmallObjects(binary, w, h, minSize) {
 function solidifyMask() {
   const p = getParams();
   const w = S.imgW, h = S.imgH;
-  let result = removeSmallObjects(S.mask, w, h, p.minObjectSize);
+  let result = S.mask;
+  if (!S.lineDrawing) result = removeSmallObjects(result, w, h, p.minObjectSize);
   if (p.closeRadius > 0) result = binaryClose(result, w, h, createDisk(p.closeRadius));
   if (p.dilateRadius > 0) result = binaryDilate(result, w, h, createDisk(p.dilateRadius));
-  result = removeSmallObjects(result, w, h, p.minObjectSize * 2);
+  result = removeSmallObjects(result, w, h, S.lineDrawing ? p.minObjectSize : p.minObjectSize * 2);
   S.solid = result;
   drawBinary('canvasSolid', result, w, h);
   return result;
@@ -3291,13 +3341,15 @@ function extractAll() {
   const t0 = performance.now();
   setTimeout(() => {
   try {
+    S.lineDrawing = lineEnhanceEnabled() && detectLineDrawing(S.rgb);
+    if (S.lineDrawing) console.log('[LineEnhance] 白线黑底线稿，使用放宽亮度+先闭运算');
     // 三视图：构建side/top深度表
     if (S.inputMode === 'tri') {
       setStatus('三视图深度对齐...');
       try { processTriViews(); } catch(e){ console.error('TriView error:', e); S.triDepth = {side:null,top:null}; }
     }
     setStatus('1/6 自动背景去除...');
-    if (S.bgEnabled) { try { buildBackgroundMask(); } catch(e){ console.error('Bg error:', e); S.bgMask = null; } }
+    if (S.bgEnabled && !S.lineDrawing) { try { buildBackgroundMask(); } catch(e){ console.error('Bg error:', e); S.bgMask = null; } }
     else { S.bgMask = null; }
     setStatus('2/6 HSV掩码...');
     extractGoldenMask();
@@ -3344,9 +3396,11 @@ function extractAll() {
         S._lastTraceMode = '方向场追踪';
         try {
           const p = getParams();
+          const ofMask = (S.lineDrawing && S.solid) ? S.solid : S.mask;
+          const ofMinB = S.lineDrawing ? 0.08 : p.brightLayer;
           let rawCurves = extractCurvesOrientationField(
-            S.rgb, S.imgW, S.imgH, S.brightness, S.mask,
-            p.brightLayer, 80, p.minLength
+            S.rgb, S.imgW, S.imgH, S.brightness, ofMask,
+            ofMinB, 80, p.minLength
           );
           setStatus('4.5/5 曲线去重...');
           rawCurves = deduplicateCurves(rawCurves, S.brightness, S.imgW, S.imgH, 6);
@@ -3407,7 +3461,7 @@ function extractAll() {
     drawEditor();
     updateCurveList();
     const ms = Math.round(performance.now() - t0);
-    const modeTxt = S.inputMode==='tri' ? '三视图' : '单图';
+    const modeTxt = (S.inputMode==='tri' ? '三视图' : '单图') + (S.lineDrawing ? ' · 线稿' : '');
     setStatus(`完成: ${S.smoothedCurves.length} 根曲线 · ${modeTxt} · ${ms}ms`);
     toast(`提取完成：${S.smoothedCurves.length} 根曲线（${ms}ms）`, 'ok');
   } catch(e) {
@@ -4351,6 +4405,9 @@ document.getElementById('modeAngle').addEventListener('click', () => {
   setStatus('模式: 角度聚类（固定5根主枝条）');
 });
 document.getElementById('connectV2').addEventListener('change', () => {
+  if (S.image) scheduleReextract();
+});
+document.getElementById('lineEnhance').addEventListener('change', () => {
   if (S.image) scheduleReextract();
 });
 
