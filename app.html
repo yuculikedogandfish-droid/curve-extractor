@@ -856,6 +856,7 @@ function smooth1D(arr, radius) {
 // 处理上传的三视图：side/top 生成深度表
 function processTriViews() {
   S.triDepth = { side:null, top:null };
+  S.triSideCurves = null;
   ['side','top'].forEach(view=>{
     const rgb = S.triRgb[view];
     if (!rgb) return;
@@ -866,6 +867,133 @@ function processTriViews() {
     S.triDepth[view] = buildRowTable(mask, rgb.width, rgb.height);
     console.log(`[TriView] ${view} 深度表 ${rgb.width}x${rgb.height} invert=${inv}`);
   });
+  if (S.lineDrawing && S.triRgb.side) {
+    try {
+      S.triSideCurves = extractLineCurvesFromRgb(S.triRgb.side);
+      console.log(`[TriView] 侧面曲线 ${S.triSideCurves.curves.length} 条`);
+    } catch (e) {
+      console.error('Side curve extract error:', e);
+      S.triSideCurves = null;
+    }
+  }
+}
+
+function extractLineCurvesFromRgb(rgb) {
+  const p = getParams();
+  const w = rgb.width, h = rgb.height, data = rgb.data;
+  const mask = new Uint8Array(w * h);
+  const brightness = new Float32Array(w * h);
+  const thr = lineBrightThresh(p);
+  for (let i = 0; i < w * h; i++) {
+    const val = Math.max(data[i * 4], data[i * 4 + 1], data[i * 4 + 2]) / 255;
+    brightness[i] = val;
+    mask[i] = val >= thr ? 1 : 0;
+  }
+  let solid = mask;
+  if (p.closeRadius > 0) solid = binaryClose(solid, w, h, createDisk(p.closeRadius));
+  solid = removeSmallObjects(solid, w, h, p.minObjectSize);
+  const skel = pruneSkeleton(zhangSuen(solid, w, h), w, h, p.pruneLength);
+  const savedB = S.brightness, savedInv = S.invertMask;
+  S.brightness = brightness;
+  S.invertMask = false;
+  let curves = extractCurvesSkeletonGraph(skel, w, h, Math.min(p.minLength, 12));
+  curves = connectShortSegmentsV2(curves, w, h);
+  curves = filterLabelCurves(curves, w, h);
+  S.brightness = savedB;
+  S.invertMask = savedInv;
+  return { curves, w, h };
+}
+
+function filterLabelCurves(curves, w, h) {
+  const kept = curves.filter(pts => {
+    let ymin = h, ymax = 0, xmin = w, xmax = 0;
+    for (const p of pts) {
+      if (p[0] < ymin) ymin = p[0];
+      if (p[0] > ymax) ymax = p[0];
+      if (p[1] < xmin) xmin = p[1];
+      if (p[1] > xmax) xmax = p[1];
+    }
+    const yMid = (ymin + ymax) / (2 * h);
+    const xMid = (xmin + xmax) / (2 * w);
+    const ySpan = (ymax - ymin) / h;
+    if (yMid < 0.12 && ySpan < 0.08 && xMid < 0.6) return false;
+    return true;
+  });
+  console.log(`[LabelFilter] ${curves.length} -> ${kept.length}`);
+  return kept;
+}
+
+function curveYSpan(pts, h) {
+  let ymin = 1, ymax = 0;
+  for (const p of pts) {
+    const y = p[0] / (h - 1);
+    if (y < ymin) ymin = y;
+    if (y > ymax) ymax = y;
+  }
+  return { ymin, ymax, span: Math.max(1e-6, ymax - ymin) };
+}
+
+function matchFrontToSideCurves() {
+  S.triMatch = null;
+  const sidePack = S.triSideCurves;
+  if (!S.lineDrawing || !sidePack || !S.smoothedCurves || !S.smoothedCurves.length) return;
+  const used = new Uint8Array(sidePack.curves.length);
+  S.triMatch = new Array(S.smoothedCurves.length).fill(null);
+  const order = S.smoothedCurves.map((_, i) => i).sort((a, b) => {
+    const la = (S.smoothedCurves[a].smoothed || []).length;
+    const lb = (S.smoothedCurves[b].smoothed || []).length;
+    return lb - la;
+  });
+  for (const fi of order) {
+    const pts = S.smoothedCurves[fi].smoothed || S.smoothedCurves[fi].points;
+    const fy = curveYSpan(pts, S.imgH);
+    const fLen = pts.length;
+    let best = -1, bestScore = 0.12, bestRev = false;
+    for (let si = 0; si < sidePack.curves.length; si++) {
+      if (used[si]) continue;
+      const sc = sidePack.curves[si];
+      const sy = curveYSpan(sc, sidePack.h);
+      const ov = Math.max(0, Math.min(fy.ymax, sy.ymax) - Math.max(fy.ymin, sy.ymin));
+      const spanPen = ov / Math.max(fy.span, sy.span);
+      const lenPen = Math.min(fLen, sc.length) / Math.max(fLen, sc.length);
+      const score = spanPen * (0.55 + 0.45 * lenPen);
+      if (score <= bestScore) continue;
+      const y0 = pts[0][0] / S.imgH, y1 = pts[pts.length - 1][0] / S.imgH;
+      const s0 = sc[0][0] / sidePack.h, s1 = sc[sc.length - 1][0] / sidePack.h;
+      best = si;
+      bestScore = score;
+      bestRev = (Math.abs(y0 - s1) + Math.abs(y1 - s0)) < (Math.abs(y0 - s0) + Math.abs(y1 - s1));
+    }
+    if (best < 0) continue;
+    used[best] = 1;
+    S.triMatch[fi] = { sideIdx: best, reversed: bestRev };
+  }
+  console.log('[TriMatch]', S.triMatch.map(m => m ? m.sideIdx : -1));
+}
+
+function polylineArcParam(pts) {
+  const n = pts.length, t = new Float32Array(n);
+  for (let i = 1; i < n; i++) t[i] = t[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  const L = t[n - 1] || 1;
+  for (let i = 0; i < n; i++) t[i] /= L;
+  return t;
+}
+
+function sampleSideZAlongFront(frontPts, sidePts, sideW, sideH, reversed) {
+  const side = reversed ? sidePts.slice().reverse() : sidePts;
+  const st = polylineArcParam(side);
+  const ft = polylineArcParam(frontPts);
+  const zN = new Float32Array(frontPts.length);
+  let j = 0;
+  for (let i = 0; i < frontPts.length; i++) {
+    while (j < st.length - 2 && st[j + 1] < ft[i]) j++;
+    const j2 = Math.min(st.length - 1, j + 1);
+    const den = (st[j2] - st[j]) || 1;
+    const a = (ft[i] - st[j]) / den;
+    const x = side[j][1] * (1 - a) + side[j2][1] * a;
+    zN[i] = x / Math.max(1, sideW - 1);
+  }
+  return zN;
 }
 
 function extractGoldenMask() {
@@ -3408,6 +3536,7 @@ function extractAll() {
           let rawCurves = extractCurvesSkeletonGraph(S.skeletonPruned, S.imgW, S.imgH, minLen);
           rawCurves = connectShortSegmentsV2(rawCurves, S.imgW, S.imgH);
           rawCurves = deduplicateCurves(rawCurves, S.brightness, S.imgW, S.imgH, S.lineDrawing ? 4 : 6);
+          if (S.lineDrawing) rawCurves = filterLabelCurves(rawCurves, S.imgW, S.imgH);
           S.curves = rawCurves.map((curve, i) => {
             const start = curve[0], end = curve[curve.length - 1];
             const angle = Math.atan2(end[0] - start[0], end[1] - start[1]) * 180 / Math.PI;
@@ -3486,10 +3615,15 @@ function extractAll() {
 
     setStatus('6/6 RDP简化+B样条+面片生成...');
     smoothAllCurves();
+    try { matchFrontToSideCurves(); } catch(e) { console.error('TriMatch error:', e); S.triMatch = null; }
     try { S.curveLevels = classifyCurves(S.smoothedCurves, S.brightness, S.imgW, S.imgH); } catch(e) { console.error('Classify error:', e); }
     try { estimateCurveDepths(); } catch(e) { console.error('Depth error:', e); }
     S.curveEdits = {}; S.edit3d.selected=-1; S.edit3d.dragHandle=-1;
     try { S.cardMeshes = buildAllCardMeshes(); } catch(e) { console.error('Card mesh error:', e); }
+    if (S.inputMode === 'tri') {
+      S.view3d.rotX = -0.42;
+      S.view3d.rotY = 0.95;
+    }
     drawCurves('canvasCurves', S.smoothedCurves, true, true);
     try { draw3DView(); } catch(e) { console.error('3D view error:', e); }
     drawEditor();
@@ -3632,16 +3766,22 @@ function buildCurveWorldPoints(cd, idx) {
     const xN = p[1]/S.imgW, yN = p[0]/S.imgH; // 归一化坐标（图像y向下）
 
     if (tri && tri.side) {
-      // === 三视图深度重建 ===
-      const zSideN = S.lineDrawing
-        ? queryRowTableMedian(tri.side, yN)
-        : queryRowTable(tri.side, yN, xN);
-      let zN = (zSideN!=null) ? zSideN : xN;
-      if (tri.top) {
-        const zTopN = queryColTableMedian(tri.top, xN);
-        if (zTopN!=null) zN = 0.7*zN + 0.3*zTopN;
+      const match = (S.triMatch && S.triMatch[idx]) || null;
+      const pack = S.triSideCurves;
+      if (match && pack && pack.curves[match.sideIdx]) {
+        if (!cd._sideZN) {
+          cd._sideZN = sampleSideZAlongFront(curve, pack.curves[match.sideIdx], pack.w, pack.h, match.reversed);
+          cd._sideZN = smooth1D(cd._sideZN, 24);
+        }
+        const zN = cd._sideZN[pi];
+        z = (zN - 0.5) * 2 * depthRange;
+      } else {
+        const zSideN = S.lineDrawing
+          ? queryRowTableMedian(tri.side, yN)
+          : queryRowTable(tri.side, yN, xN);
+        let zN = (zSideN!=null) ? zSideN : xN;
+        z = (zN - 0.5) * 2 * depthRange;
       }
-      z = (zN - 0.5) * 2 * depthRange;
     } else {
       // === 单图：启发式伪深度 ===
       z = depthProfile ? depthProfile[pi]*1.2 : 0;
@@ -3844,8 +3984,9 @@ function draw3DView() {
 
     const style = levelStyles[level];
     const avgScale = pts.reduce((sum, p) => sum + p.scale, 0) / pts.length;
+    const thick = S.lineDrawing ? 1.8 : 1;
     const alpha = Math.min(1, Math.max(0.2, style.alpha * avgScale));
-    const lineWidth = Math.max(0.5, style.lineWidth * avgScale);
+    const lineWidth = Math.max(0.5, style.lineWidth * avgScale * thick);
 
     if (style.glow) {
       ctx.shadowColor = style.color;
@@ -3877,7 +4018,7 @@ function draw3DView() {
   ctx.globalAlpha = 1;
 
   // ===== 面片网格渲染 =====
-  if (S.card.enabled) {
+  if (S.card.enabled && !S.lineDrawing) {
     if (!S.cardMeshes) buildAllCardMeshes();
     const cardColors = { 1:'rgba(255,215,0,', 2:'rgba(255,165,0,', 3:'rgba(150,130,80,' };
     const step = 3; // 渲染降频，提升性能
