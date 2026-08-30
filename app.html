@@ -943,7 +943,7 @@ function autoAdaptParams() {
     closeRadius = Math.max(4, Math.round(5 * scaleFactor));
     dilateRadius = 0;
     minObjectSize = Math.max(20, Math.round(30 * scaleFactor));
-    pruneLength = Math.max(4, Math.round(6 * scaleFactor));
+    pruneLength = Math.max(2, Math.round(3 * scaleFactor));
     minPathLength = Math.max(15, Math.round(20 * scaleFactor));
     const rdpEl = document.getElementById('rdpEpsilon');
     if (rdpEl) rdpEl.value = Math.max(parseFloat(rdpEl.value) || 8, 10);
@@ -2693,7 +2693,9 @@ function connectShortSegments(curves, w, h) {
 function connectShortSegmentsV2(curves, w, h) {
   if (curves.length <= 1) return curves;
 
-  const maxConnectDist = Math.max(15, Math.round(Math.min(w, h) / 50));
+  const maxConnectDist = S.lineDrawing
+    ? Math.max(40, Math.round(Math.min(w, h) / 25))
+    : Math.max(15, Math.round(Math.min(w, h) / 50));
   const minDot = Math.cos(Math.PI / 3); // 60°
   const segs = curves.map(c => c.slice());
   const used = new Uint8Array(segs.length);
@@ -3395,14 +3397,17 @@ function extractAll() {
     drawBinary('canvasSkeleton', S.skeletonPruned, S.imgW, S.imgH);
 
     if (S.traceMode === 'of') {
-      // 方向场追踪（带间隙跨越、方向惯性、短段连接）
-      const useSkeletonGraph = false;
+      // 线稿：沿骨架走完整中心线再拼接（方向场在1px骨架上会过早停）
+      const useSkeletonGraph = !!S.lineDrawing;
       if (useSkeletonGraph) {
         setStatus('5/6 骨架图论追踪...');
         S._lastTraceMode = '骨架图论追踪';
         try {
           const p = getParams();
-          let rawCurves = extractCurvesSkeletonGraph(S.skeletonPruned, S.imgW, S.imgH, p.minLength);
+          const minLen = S.lineDrawing ? Math.min(p.minLength, 12) : p.minLength;
+          let rawCurves = extractCurvesSkeletonGraph(S.skeletonPruned, S.imgW, S.imgH, minLen);
+          rawCurves = connectShortSegmentsV2(rawCurves, S.imgW, S.imgH);
+          rawCurves = deduplicateCurves(rawCurves, S.brightness, S.imgW, S.imgH, S.lineDrawing ? 4 : 6);
           S.curves = rawCurves.map((curve, i) => {
             const start = curve[0], end = curve[curve.length - 1];
             const angle = Math.atan2(end[0] - start[0], end[1] - start[1]) * 180 / Math.PI;
