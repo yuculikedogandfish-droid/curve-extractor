@@ -361,9 +361,10 @@
         <button class="btn btn-secondary" id="btnExportOBJ">线条OBJ</button>
       </div>
       <div class="btn-row" style="margin-top:8px;">
-        <button class="btn" id="btnExportCardOBJ">导出面片OBJ（含UV）</button>
+        <button class="btn" id="btnExportCardOBJ">面片 OBJ（含UV）</button>
+        <button class="btn" id="btnExportCardFBX" style="background:#c9a227;">面片 FBX（含UV）</button>
       </div>
-      <div style="font-size:11px;color:#888;margin-top:6px;">面片OBJ含 v/vt/f，无贴图，贴图在UE中自行指定</div>
+      <div style="font-size:11px;color:#888;margin-top:6px;">面片含顶点/UV/法线，无贴图，贴图在UE中自行指定；FBX为UE推荐格式</div>
     </div>
   </div>
 
@@ -404,7 +405,12 @@
               <input type="checkbox" id="chkShowL3" checked> <span style="color:#888;">●</span> 三级
             </label>
           </div>
-          <div style="position:absolute;bottom:10px;left:10px;color:#888;font-size:12px;background:rgba(0,0,0,0.7);padding:8px;border-radius:4px;">
+          <div style="position:absolute;top:10px;right:10px;display:flex;gap:6px;z-index:10;">
+            <button class="btn btn-sm" id="btnEdit3d" style="background:#2a2a2a;color:#bbb;">✎ 编辑模式</button>
+            <button class="btn btn-sm" id="btnResetView" style="background:#2a2a2a;color:#bbb;">重置视角</button>
+            <button class="btn btn-sm" id="btnClearEdit" style="background:#2a2a2a;color:#bbb;">清除编辑</button>
+          </div>
+          <div style="position:absolute;bottom:10px;left:10px;color:#888;font-size:12px;background:rgba(0,0,0,0.7);padding:8px;border-radius:4px;" id="hint3d">
             拖拽旋转视角 | 滚轮缩放
           </div>
         </div>
@@ -432,6 +438,15 @@ const S = {
   traceMode: 'of', // 'of' = 方向场追踪, 'smart' = 智能端点追踪, 'angle' = 固定5根角度聚类
   // 3D预览相关
   view3d: { rotX: -0.3, rotY: 0.1, zoom: 1.0, dragging: false, lastX: 0, lastY: 0 },
+  // 3D编辑
+  edit3d: {
+    enabled: false,      // 编辑模式开关
+    selected: -1,        // 选中曲线idx
+    handles: [],         // 当前可拖拽手柄（屏幕坐标+世界点引用）
+    dragHandle: -1,      // 正在拖拽的手柄
+    editMode: 'move',    // move=平移 / depth=深度
+  },
+  curveEdits: {},        // {curveIdx: {pi:{dx,dy,dz}}} 世界坐标编辑偏移
   curveLevels: [], // 每条曲线的分级：1=一级主干, 2=二级分支, 3=三级末梢
   showRefImage: true,
   showLevels: [true, true, true], // 是否显示一/二/三级曲线
@@ -3295,6 +3310,7 @@ function extractAll() {
     smoothAllCurves();
     try { S.curveLevels = classifyCurves(S.smoothedCurves, S.brightness, S.imgW, S.imgH); } catch(e) { console.error('Classify error:', e); }
     try { estimateCurveDepths(); } catch(e) { console.error('Depth error:', e); }
+    S.curveEdits = {}; S.edit3d.selected=-1; S.edit3d.dragHandle=-1;
     try { S.cardMeshes = buildAllCardMeshes(); } catch(e) { console.error('Card mesh error:', e); }
     drawCurves('canvasCurves', S.smoothedCurves, true, true);
     try { draw3DView(); } catch(e) { console.error('3D view error:', e); }
@@ -3399,6 +3415,23 @@ const V3 = {
   norm:a=>{const l=Math.hypot(a.x,a.y,a.z)||1;return {x:a.x/l,y:a.y/l,z:a.z/l};}
 };
 
+// 3D编辑：手柄偏移按高斯权重平滑扩散到曲线各点
+function getEditOffset(idx, pi, n) {
+  const edits = S.curveEdits[idx];
+  if (!edits) return {dx:0,dy:0,dz:0};
+  const keys = Object.keys(edits);
+  if (!keys.length) return {dx:0,dy:0,dz:0};
+  const sigma = Math.max(20, n * 0.12); // 影响范围
+  let dx=0,dy=0,dz=0,wSum=0;
+  for (const k of keys) {
+    const hi = parseInt(k);
+    const w = Math.exp(-((pi-hi)*(pi-hi))/(2*sigma*sigma));
+    dx += edits[hi].dx*w; dy += edits[hi].dy*w; dz += edits[hi].dz*w; wSum += w;
+  }
+  if (wSum < 1e-6) return {dx:0,dy:0,dz:0};
+  return {dx:dx/wSum, dy:dy/wSum, dz:dz/wSum};
+}
+
 // 由2D平滑曲线生成世界坐标3D点（与3D预览同一套深度逻辑，保证所见即所导）
 function buildCurveWorldPoints(cd, idx) {
   const curve = cd.smoothed;
@@ -3435,7 +3468,9 @@ function buildCurveWorldPoints(cd, idx) {
       z += baseZOffset*spread;
       z += Math.sin(t*Math.PI*2 + idx*1.7)*30*spread;
     }
-    pts.push({x,y,z,t});
+    // 应用3D编辑偏移（手柄偏移按高斯平滑扩散到整条曲线）
+    const off = getEditOffset(idx, pi, n);
+    pts.push({x:x+off.dx, y:y+off.dy, z:z+off.dz, t});
   }
   return pts;
 }
@@ -3575,62 +3610,21 @@ function draw3DView() {
   // 地面平面Y坐标（图片底部88%处，翻转后y=0）
   const groundY = S.imgH * 0.88;
 
-  // 为每条曲线生成3D点并投影
-  // 策略：保持2D的x,y位置不变，仅添加z方向深度
+  // 统一视图参数（曲线线框与面片共用，保证面片严格以曲线为中心轴）
+  const view = { cosX, sinX, cosY, sinY, focal, sceneScale, cx, cy };
+
+  // 为每条曲线生成世界3D点并投影（与面片网格同源，绝不偏移）
   const curves3d = S.smoothedCurves.map((cd, idx) => {
-    const curve = cd.smoothed;
-    const numPts = curve.length;
-    const depthProfile = S.curveDepthProfiles ? S.curveDepthProfiles[idx] : null;
-
-    // 找到根端点（y最大，最靠近底部）
-    const rootIsStart = curve[0][0] > curve[numPts-1][0];
-    const rootPt = rootIsStart ? curve[0] : curve[numPts-1];
-
-    // 每条曲线的基础z偏移：基于根端点的水平位置，让曲线在z方向扇形散开
-    const rootXNorm = (rootPt[1] - S.imgW/2) / (S.imgW/2); // -1到1
-    const baseZOffset = rootXNorm * 150 + Math.sin(idx * 2.3) * 60;
-
-    const points3d = [];
-    for (let pi = 0; pi < numPts; pi++) {
-      const pt = curve[pi];
-      const t = rootIsStart ? (pi / (numPts - 1)) : (1 - pi / (numPts - 1));
-
-      // x,y保持2D位置（以图片中心为原点，y向下为正与屏幕一致）
-      let x = pt[1] - cx;
-      let y = pt[0] - cy;
-
-      // z方向：根部z≈0，向外逐渐散开
-      const spread = t * t * (3 - 2*t); // smoothstep
-      let zc = 0;
-      if (depthProfile) {
-        // 使用depthProfile但缩放到合理范围
-        zc = depthProfile[pi] * 1.2;
-      }
-      // 基础z偏移沿曲线渐入
-      zc += baseZOffset * spread;
-      // 轻微波浪扰动
-      zc += Math.sin(t * Math.PI * 2 + idx * 1.7) * 30 * spread;
-
-      // 绕Y轴旋转
-      let x1 = x * cosY + zc * sinY;
-      let z1 = -x * sinY + zc * cosY;
-      // 绕X轴旋转
-      let y1 = y * cosX - z1 * sinX;
-      let z2 = y * sinX + z1 * cosX;
-
-      // 透视投影（应用场景缩放）
-      const persp = focal / (focal + z2 * sceneScale * 0.3);
-      const sx = cx + x1 * sceneScale * persp;
-      const sy = cy + y1 * sceneScale * persp;
-
-      points3d.push({ x: sx, y: sy, z: z2, scale: persp });
-    }
+    const worldPts = buildCurveWorldPoints(cd, idx);
+    const points3d = worldPts.map(p => projectWorld(p, view));
     const avgZ = points3d.reduce((sum, p) => sum + p.z, 0) / points3d.length;
-    return { points: points3d, avgZ, idx };
+    return { points: points3d, avgZ, idx, worldPts };
   });
 
   // 按深度排序
   curves3d.sort((a, b) => b.avgZ - a.avgZ);
+  // 缓存供3D编辑命中检测
+  S._last3D = { curves3d, view, W, H };
 
   // 绘制地面圆盘（椭圆网格）——在根部y平面
   const groundY3d = groundY - cy;
@@ -3700,7 +3694,6 @@ function draw3DView() {
 
   // ===== 面片网格渲染 =====
   if (S.card.enabled) {
-    const view = { cosX, sinX, cosY, sinY, focal, sceneScale, cx, cy };
     if (!S.cardMeshes) buildAllCardMeshes();
     const cardColors = { 1:'rgba(255,215,0,', 2:'rgba(255,165,0,', 3:'rgba(150,130,80,' };
     const step = 3; // 渲染降频，提升性能
@@ -3748,6 +3741,33 @@ function draw3DView() {
   const l2 = S.curveLevels.filter(l=>l===2).length;
   const l3 = S.curveLevels.filter(l=>l===3).length;
   ctx.fillText(`一级:${l1} 二级:${l2} 三级:${l3}`, 10, 38);
+
+  // ===== 3D编辑：选中高亮 + 可拖拽手柄 =====
+  S.edit3d.handles = [];
+  if (S.edit3d.enabled) {
+    const sel = S.edit3d.selected;
+    const selCurve = curves3d.find(c => c.idx === sel);
+    if (selCurve) {
+      const pts = selCurve.points;
+      const grip = Math.max(8, Math.round(pts.length / 24)); // 手柄数量~24个
+      ctx.lineWidth = 4; ctx.strokeStyle = '#00e5ff'; ctx.shadowColor='#00e5ff'; ctx.shadowBlur=8;
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.stroke(); ctx.shadowBlur=0;
+      // 手柄
+      for (let i=0;i<pts.length;i+=grip) {
+        const q = pts[i];
+        S.edit3d.handles.push({ curveIdx: sel, pi: i, x:q.x, y:q.y });
+        ctx.beginPath(); ctx.arc(q.x, q.y, i===S.edit3d.dragHandle?7:5, 0, Math.PI*2);
+        ctx.fillStyle = i===S.edit3d.dragHandle ? '#ff5252' : '#fff';
+        ctx.fill(); ctx.lineWidth=2; ctx.strokeStyle='#000'; ctx.stroke();
+      }
+    }
+    // 操作提示
+    ctx.fillStyle = 'rgba(0,229,255,0.9)'; ctx.font='12px sans-serif';
+    ctx.fillText(sel>=0?`编辑中：Curve ${sel+1}（拖手柄变形，Shift+拖拽改深度）`:'点击曲线选中进行编辑', 10, H-14);
+  }
 }
 
 // 绘制地面圆盘（椭圆网格）
@@ -3798,25 +3818,105 @@ function init3DInteractions() {
   const canvas = document.getElementById('canvas3d');
   if (!canvas) return;
 
+  const localPos = e => {
+    const r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+
+  // 屏幕增量 → 世界增量（逆旋转，编辑拖拽时保持相机深度不变）
+  function screenDeltaToWorld(dx, dy, view, depthMode) {
+    const dx1 = dx / view.sceneScale, dy1 = dy / view.sceneScale;
+    if (depthMode) {
+      // Shift：垂直拖拽改深度Z
+      return { dx: 0, dy: 0, dz: -dy1 };
+    }
+    const { cosX, sinX, cosY, sinY } = view;
+    const dyy = cosX * dy1;
+    const dz1 = -sinX * dy1;
+    const dxx = cosY * dx1 - sinY * dz1;
+    const dzz = sinY * dx1 + cosY * dz1;
+    return { dx: dxx, dy: dyy, dz: dzz };
+  }
+
+  // 命中最近手柄
+  function hitHandle(mx, my) {
+    for (const h of (S.edit3d.handles||[])) {
+      if (Math.hypot(h.x-mx, h.y-my) < 11) return h;
+    }
+    return null;
+  }
+  // 命中最近曲线
+  function hitCurve(mx, my) {
+    const { curves3d } = S._last3D||{};
+    if (!curves3d) return -1;
+    let best=-1, bestD=9;
+    for (const c of curves3d) {
+      const pts=c.points;
+      for (let i=0;i<pts.length-1;i+=2) {
+        const d = pointSegDist(mx,my,pts[i].x,pts[i].y,pts[i+1].x,pts[i+1].y);
+        if (d<bestD){bestD=d;best=c.idx;}
+      }
+    }
+    return best;
+  }
+
   canvas.addEventListener('mousedown', e => {
+    const p = localPos(e);
+    if (S.edit3d.enabled) {
+      const h = hitHandle(p.x,p.y);
+      if (h) {
+        S.edit3d.dragHandle = h.pi;
+        S.edit3d.dragCurve = h.curveIdx;
+        S.edit3d.dragStart = p;
+        return; // 拖手柄，不旋转
+      }
+      const c = hitCurve(p.x,p.y);
+      if (c >= 0) { S.edit3d.selected = c; draw3DView(); return; }
+      // 点空白：取消选中
+      if (S.edit3d.selected >= 0) { S.edit3d.selected = -1; draw3DView(); return; }
+    }
+    // 旋转视角
     S.view3d.dragging = true;
     S.view3d.lastX = e.clientX;
     S.view3d.lastY = e.clientY;
   });
 
   canvas.addEventListener('mousemove', e => {
-    if (!S.view3d.dragging) return;
+    const p = localPos(e);
+    // 拖手柄变形
+    if (S.edit3d.enabled && S.edit3d.dragHandle>=0 && S._last3D) {
+      const dx = p.x - S.edit3d.dragStart.x;
+      const dy = p.y - S.edit3d.dragStart.y;
+      S.edit3d.dragStart = p;
+      const dw = screenDeltaToWorld(dx, dy, S._last3D.view, e.shiftKey);
+      const ci = S.edit3d.dragCurve, pi = S.edit3d.dragHandle;
+      if (!S.curveEdits[ci]) S.curveEdits[ci] = {};
+      const cur = S.curveEdits[ci][pi] || {dx:0,dy:0,dz:0};
+      cur.dx+=dw.dx; cur.dy+=dw.dy; cur.dz+=dw.dz;
+      S.curveEdits[ci][pi] = cur;
+      // 重建该曲线面片并重绘
+      rebuildMeshFor(ci);
+      draw3DView();
+      return;
+    }
+    if (!S.view3d.dragging) {
+      // 悬停光标反馈
+      if (S.edit3d.enabled) canvas.style.cursor = hitHandle(p.x,p.y)?'grab':(hitCurve(p.x,p.y)>=0?'pointer':'default');
+      return;
+    }
     const dx = e.clientX - S.view3d.lastX;
     const dy = e.clientY - S.view3d.lastY;
     S.view3d.rotY += dx * 0.01;
     S.view3d.rotX += dy * 0.01;
-    S.view3d.rotX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, S.view3d.rotX));
-    S.view3d.lastX = e.clientX;
-    S.view3d.lastY = e.clientY;
+    S.view3d.rotX = Math.max(-Math.PI/2, Math.min(Math.PI/2, S.view3d.rotX));
+    S.view3d.lastX = e.clientX; S.view3d.lastY = e.clientY;
     draw3DView();
   });
 
-  canvas.addEventListener('mouseup', () => { S.view3d.dragging = false; });
+  window.addEventListener('mouseup', () => {
+    S.view3d.dragging = false;
+    if (S.edit3d.dragHandle>=0) { S.edit3d.dragHandle=-1; draw3DView(); }
+  });
   canvas.addEventListener('mouseleave', () => { S.view3d.dragging = false; });
 
   canvas.addEventListener('wheel', e => {
@@ -3825,6 +3925,53 @@ function init3DInteractions() {
     S.view3d.zoom = Math.max(0.3, Math.min(3, S.view3d.zoom));
     draw3DView();
   }, { passive: false });
+
+  // 编辑模式开关
+  const btnEdit = document.getElementById('btnEdit3d');
+  if (btnEdit && !btnEdit._bound) {
+    btnEdit._bound = true;
+    btnEdit.addEventListener('click', () => {
+      S.edit3d.enabled = !S.edit3d.enabled;
+      S.edit3d.selected = -1; S.edit3d.dragHandle = -1;
+      btnEdit.classList.toggle('active', S.edit3d.enabled);
+      btnEdit.style.background = S.edit3d.enabled ? '#00e5ff' : '#2a2a2a';
+      btnEdit.style.color = S.edit3d.enabled ? '#000' : '#bbb';
+      document.getElementById('hint3d').textContent = S.edit3d.enabled
+        ? '编辑：点曲线选中·拖白色手柄变形·Shift+拖改深度·空白处取消'
+        : '拖拽旋转视角 | 滚轮缩放';
+      draw3DView();
+      toast(S.edit3d.enabled?'已进入3D编辑模式':'已退出编辑模式','info',1200);
+    });
+    document.getElementById('btnResetView').addEventListener('click', () => {
+      S.view3d.rotX=-0.3; S.view3d.rotY=0.1; S.view3d.zoom=1.0; draw3DView();
+      toast('视角已重置','info',1000);
+    });
+    document.getElementById('btnClearEdit').addEventListener('click', () => {
+      const n = Object.keys(S.curveEdits).length;
+      S.curveEdits = {}; S.edit3d.selected=-1;
+      buildAllCardMeshes(); draw3DView();
+      toast(n?`已清除 ${n} 条曲线的编辑`:'暂无编辑', n?'success':'info',1200);
+    });
+  }
+}
+
+// 点到线段距离
+function pointSegDist(px,py,ax,ay,bx,by){
+  const dx=bx-ax,dy=by-ay;const l2=dx*dx+dy*dy;
+  if(l2===0)return Math.hypot(px-ax,py-ay);
+  let t=((px-ax)*dx+(py-ay)*dy)/l2;t=Math.max(0,Math.min(1,t));
+  return Math.hypot(px-(ax+t*dx),py-(ay+t*dy));
+}
+
+// 重建单条曲线的面片网格
+function rebuildMeshFor(ci){
+  if(!S.cardMeshes) return;
+  const cd = S.smoothedCurves[ci];
+  if(!cd) return;
+  const wp = buildCurveWorldPoints(cd, ci);
+  const sheets = buildCardMesh(wp, S.card);
+  const mi = S.cardMeshes.findIndex(m=>m.idx===ci);
+  if(mi>=0) S.cardMeshes[mi] = { idx:ci, worldPts:wp, sheets };
 }
 
 // ============================================================
@@ -3952,6 +4099,131 @@ function exportCardOBJ() {
   } finally {
     setBusy('btnExportCardOBJ', false);
   }
+}
+
+// ============================================================
+// FBX ASCII 导出（UE/Unity/Maya 可导入，含UV与法线，y-up）
+// ============================================================
+function exportCardFBX() {
+  if (!S.smoothedCurves || !S.smoothedCurves.length) { toast('请先提取曲线','err'); return; }
+  setBusy('btnExportCardFBX', true, '导出中...');
+  try {
+    if (!S.cardMeshes) buildAllCardMeshes();
+    const meshes = S.cardMeshes;
+    // 合并所有sheet为一个mesh
+    const V=[], UV=[], PVI=[], NRM=[];
+    meshes.forEach(mesh => mesh.sheets.forEach(sheet => {
+      const base = V.length/3;
+      for (const v of sheet.verts) { V.push(v.x, -v.y, v.z); UV.push(v.u, v.v); }
+      for (const tri of sheet.tris) {
+        const a=base+tri[0], b=base+tri[1], c=base+tri[2];
+        // 面法线
+        const ax=V[a*3],ay=V[a*3+1],az=V[a*3+2];
+        const ux=V[b*3]-ax,uy=V[b*3+1]-ay,uz=V[b*3+2]-az;
+        const vx=V[c*3]-ax,vy=V[c*3+1]-ay,vz=V[c*3+2]-az;
+        let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
+        const nl=Math.hypot(nx,ny,nz)||1; nx/=nl;ny/=nl;nz/=nl;
+        PVI.push(a,b,-c-1);                 // 末位取负-1表示面结束
+        for(let k=0;k<3;k++) NRM.push(nx,ny,nz); // ByPolygonVertex Direct
+      }
+    }));
+    const chunk = (arr, perLine) => {
+      let s='';
+      for(let i=0;i<arr.length;i++){
+        if(i%perLine===0) s+='\t\t\t';
+        s += (typeof arr[i]==='number'?formatFbxNum(arr[i]):arr[i]);
+        if(i<arr.length-1) s+=',';
+        if(i%perLine===perLine-1 || i===arr.length-1) s+='\n';
+      }
+      return s;
+    };
+    const fbx = `; FBX 7.4.0 ASCII — Curve Extractor intersecting cards
+FBXHeaderExtension:  {
+\tFBXHeaderVersion: 1003
+\tFBXVersion: 7400
+\tCreator: "Curve Extractor"
+}
+GlobalSettings:  {
+\tVersion: 1000
+\tProperties70:  {
+\t\tP: "UpAxis", "int", "Integer", "",1
+\t\tP: "UpAxisSign", "int", "Integer", "",1
+\t\tP: "FrontAxis", "int", "Integer", "",2
+\t\tP: "FrontAxisSign", "int", "Integer", "",1
+\t\tP: "CoordAxis", "int", "Integer", "",0
+\t\tP: "CoordAxisSign", "int", "Integer", "",1
+\t\tP: "OriginalUpAxis", "int", "Integer", "",1
+\t\tP: "UnitScaleFactor", "double", "Number", "",1
+\t}
+}
+Definitions:  {
+\tVersion: 100
+\tCount: 2
+\tObjectType: "GlobalSettings" {Count: 1}
+\tObjectType: "Model" {Count: 1}
+\tObjectType: "Geometry" {Count: 1}
+}
+Objects:  {
+\tGeometry: 100000, "Geometry::cards", "Mesh" {
+\t\tVertices: *${V.length} {
+${chunk(V,9)}\t\t}
+\t\tPolygonVertexIndex: *${PVI.length} {
+${chunk(PVI,12)}\t\t}
+\t\tGeometryVersion: 124
+\t\tLayerElementNormal: 0 {
+\t\t\tVersion: 101
+\t\t\tName: "Normals"
+\t\t\tMappingInformationType: "ByPolygonVertex"
+\t\t\tReferenceInformationType: "Direct"
+\t\t\tNormals: *${NRM.length} {
+${chunk(NRM,9)}\t\t\t}
+\t\t}
+\t\tLayerElementUV: 0 {
+\t\t\tVersion: 101
+\t\t\tName: "map1"
+\t\t\tMappingInformationType: "ByPolygonVertex"
+\t\t\tReferenceInformationType: "Direct"
+\t\t\tUV: *${UV.length} {
+${chunk(UV,8)}\t\t\t}
+\t\t}
+\t\tLayer: 0 {
+\t\t\tVersion: 100
+\t\t\tLayerElement:  {Type: "LayerElementNormal"
+\t\t\t\tTypedIndex: 0
+\t\t\t}
+\t\t\tLayerElement:  {Type: "LayerElementUV"
+\t\t\t\tTypedIndex: 0
+\t\t\t}
+\t\t}
+\t}
+\tModel: 200000, "Model::cards", "Mesh" {
+\t\tVersion: 232
+\t\tProperties70:  {
+\t\t\tP: "RotationActive", "bool", "", "",1
+\t\t\tP: "InheritType", "enum", "", "",1
+\t\t\tP: "ScalingMax", "Vector3D", "Vector", "",1,1,1
+\t\t\tP: "DefaultAttributeIndex", "int", "Integer", "",0
+\t\t}
+\t\tShading: Y
+\t\tCulling: "CullingOff"
+\t}
+}
+Connections:  {
+\tC: "OO",100000,200000
+}
+`;
+    downloadFile(fbx, 'cards_uv.fbx', 'application/octet-stream');
+    const faces = PVI.length/3;
+    toast(`FBX已导出 ${V.length/3}顶点 / ${faces}面（含UV/法线）`,'ok',3000);
+    setStatus(`面片FBX已导出: ${V.length/3}顶点, ${faces}面`);
+  } catch(e) {
+    console.error('FBX export error:', e);
+    toast('FBX导出失败: '+e.message,'err');
+  } finally { setBusy('btnExportCardFBX', false); }
+}
+function formatFbxNum(n){
+  if(Number.isInteger(n)) return String(n);
+  return n.toFixed(4);
 }
 
 // ============================================================
@@ -4090,6 +4362,7 @@ document.getElementById('btnExportJSON').addEventListener('click', exportJSON);
 document.getElementById('btnExportDXF').addEventListener('click', exportDXF);
 document.getElementById('btnExportOBJ').addEventListener('click', exportOBJ);
 document.getElementById('btnExportCardOBJ').addEventListener('click', exportCardOBJ);
+document.getElementById('btnExportCardFBX').addEventListener('click', exportCardFBX);
 
 // ============================================================
 // 新增控件事件：背景 / 面片 / 三视图 / 交互反馈
