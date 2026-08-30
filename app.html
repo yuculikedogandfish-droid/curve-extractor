@@ -406,7 +406,7 @@
           <canvas id="canvas3d"></canvas>
           <div style="position:absolute;top:10px;left:10px;display:flex;gap:12px;align-items:center;color:#ccc;font-size:12px;background:rgba(0,0,0,0.75);padding:8px 12px;border-radius:6px;z-index:10;">
             <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
-              <input type="checkbox" id="chkRefImage" checked> 参考图
+              <input type="checkbox" id="chkRefImage" checked> 参照图
             </label>
             <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
               <input type="checkbox" id="chkShowL1" checked> <span style="color:#FFD700;">●</span> 一级
@@ -577,6 +577,7 @@ function loadImage(file) {
       ctx.drawImage(img, 0, 0);
       S.rgb = ctx.getImageData(0, 0, S.imgW, S.imgH);
       S._refCanvas = null; // 清除参考图缓存
+      syncBgPreviewToFront();
       // 自动检测背景亮度：平均亮度>0.5视为浅色背景，需要反转
       const d = S.rgb.data;
       let sumV = 0;
@@ -599,6 +600,12 @@ function drawCanvas(canvasId, imageData) {
   canvas.width = imageData.width; canvas.height = imageData.height;
   const ctx = canvas.getContext('2d');
   ctx.putImageData(imageData, 0, 0);
+}
+
+// 线稿会跳过 flood-fill 去背景，仍要把「去背景」画布刷成当前正面图，避免残留 demo 金色枝条
+function syncBgPreviewToFront() {
+  if (!S.rgb) return;
+  drawCanvas('canvasBg', S.rgb);
 }
 
 function drawBinary(canvasId, binary, w, h) {
@@ -810,6 +817,16 @@ function buildRowTable(mask, w, h) {
   return { rows, w, h };
 }
 
+function buildColTable(mask, w, h) {
+  const cols = new Array(w);
+  for (let x = 0; x < w; x++) {
+    const arr = [];
+    for (let y = 0; y < h; y++) if (mask[y * w + x]) arr.push(y / Math.max(1, h - 1));
+    cols[x] = arr;
+  }
+  return { cols, w, h };
+}
+
 // 在行表中按归一化高度yN、水平分位xN查询横坐标（0..1），找不到返回null
 function queryRowTable(table, yN, xN) {
   if (!table) return null;
@@ -857,6 +874,7 @@ function smooth1D(arr, radius) {
 function processTriViews() {
   S.triDepth = { side:null, top:null };
   S.triSideCurves = null;
+  S.triTopCols = null;
   ['side','top'].forEach(view=>{
     const rgb = S.triRgb[view];
     if (!rgb) return;
@@ -869,11 +887,23 @@ function processTriViews() {
   });
   if (S.lineDrawing && S.triRgb.side) {
     try {
-      S.triSideCurves = extractLineCurvesFromRgb(S.triRgb.side);
-      console.log(`[TriView] 侧面曲线 ${S.triSideCurves.curves.length} 条`);
+      const pack = extractLineCurvesFromRgb(S.triRgb.side);
+      S.triSideCurves = pack;
+      S.triDepth.side = buildRowTable(pack.skel, pack.w, pack.h);
+      console.log(`[TriView] 侧面骨架曲线 ${pack.curves.length} 条`);
     } catch (e) {
       console.error('Side curve extract error:', e);
       S.triSideCurves = null;
+    }
+  }
+  if (S.lineDrawing && S.triRgb.top) {
+    try {
+      const pack = extractLineCurvesFromRgb(S.triRgb.top);
+      S.triTopCols = buildColTable(pack.skel, pack.w, pack.h);
+      S.triDepth.top = buildRowTable(pack.skel, pack.w, pack.h);
+    } catch (e) {
+      console.error('Top skeleton error:', e);
+      S.triTopCols = null;
     }
   }
 }
@@ -901,7 +931,7 @@ function extractLineCurvesFromRgb(rgb) {
   curves = filterLabelCurves(curves, w, h);
   S.brightness = savedB;
   S.invertMask = savedInv;
-  return { curves, w, h };
+  return { curves, w, h, skel };
 }
 
 function filterLabelCurves(curves, w, h) {
@@ -979,21 +1009,90 @@ function polylineArcParam(pts) {
   return t;
 }
 
-function sampleSideZAlongFront(frontPts, sidePts, sideW, sideH, reversed) {
-  const side = reversed ? sidePts.slice().reverse() : sidePts;
-  const st = polylineArcParam(side);
-  const ft = polylineArcParam(frontPts);
-  const zN = new Float32Array(frontPts.length);
-  let j = 0;
-  for (let i = 0; i < frontPts.length; i++) {
-    while (j < st.length - 2 && st[j + 1] < ft[i]) j++;
-    const j2 = Math.min(st.length - 1, j + 1);
-    const den = (st[j2] - st[j]) || 1;
-    const a = (ft[i] - st[j]) / den;
-    const x = side[j][1] * (1 - a) + side[j2][1] * a;
-    zN[i] = x / Math.max(1, sideW - 1);
+function clusterVals(arr, eps) {
+  if (!arr.length) return [];
+  const s = arr.slice().sort((a, b) => a - b);
+  const out = [];
+  let sum = s[0], n = 1;
+  for (let i = 1; i < s.length; i++) {
+    if (s[i] - s[i - 1] <= eps) { sum += s[i]; n++; }
+    else { out.push(sum / n); sum = s[i]; n = 1; }
   }
-  return zN;
+  out.push(sum / n);
+  return out;
+}
+
+function zCandsAtY(table, yN, win) {
+  if (!table) return [];
+  const y = Math.round(yN * (table.h - 1));
+  const c = [];
+  for (let d = -win; d <= win; d++) {
+    const yy = y + d;
+    if (yy >= 0 && yy < table.h && table.rows[yy]) {
+      for (let k = 0; k < table.rows[yy].length; k++) c.push(table.rows[yy][k]);
+    }
+  }
+  return clusterVals(c, 12 / Math.max(1, table.w - 1));
+}
+
+function zCandsAtX(colTable, xN, win) {
+  if (!colTable) return [];
+  const x = Math.round(xN * (colTable.w - 1));
+  const c = [];
+  for (let d = -win; d <= win; d++) {
+    const xx = x + d;
+    if (xx >= 0 && xx < colTable.w && colTable.cols[xx]) {
+      for (let k = 0; k < colTable.cols[xx].length; k++) c.push(colTable.cols[xx][k]);
+    }
+  }
+  return clusterVals(c, 12 / Math.max(1, colTable.h - 1));
+}
+
+function pickZFromCands(sideC, topC, prev, preferTop) {
+  const pool = [];
+  for (let i = 0; i < sideC.length; i++) pool.push({ z: sideC[i], pen: preferTop ? 0.4 : 0 });
+  for (let i = 0; i < topC.length; i++) pool.push({ z: topC[i], pen: preferTop ? 0 : 0.4 });
+  if (!pool.length) return prev != null ? prev : 0.5;
+  let best = pool[0].z, bestS = 1e9;
+  for (let k = 0; k < pool.length; k++) {
+    const cont = prev == null ? Math.abs(pool[k].z - 0.5) : Math.abs(pool[k].z - prev);
+    const s = cont + pool[k].pen;
+    if (s < bestS) { bestS = s; best = pool[k].z; }
+  }
+  return best;
+}
+
+function reconstructZEpipolar(frontPts) {
+  const n = frontPts.length;
+  const run = (dir) => {
+    const zN = new Float32Array(n);
+    let prev = null;
+    const start = dir > 0 ? 0 : n - 1;
+    const end = dir > 0 ? n : -1;
+    for (let i = start; i !== end; i += dir) {
+      const yN = frontPts[i][0] / S.imgH;
+      const xN = frontPts[i][1] / S.imgW;
+      const i2 = i + dir;
+      let preferTop = false;
+      if (i2 >= 0 && i2 < n) {
+        const dy = Math.abs(frontPts[i2][0] - frontPts[i][0]);
+        const dx = Math.abs(frontPts[i2][1] - frontPts[i][1]);
+        preferTop = dx > dy * 1.6;
+      }
+      const sideC = zCandsAtY(S.triDepth && S.triDepth.side, yN, preferTop ? 3 : 6);
+      const topC = zCandsAtX(S.triTopCols, xN, preferTop ? 6 : 3);
+      prev = pickZFromCands(sideC, topC, prev, preferTop);
+      zN[i] = prev;
+    }
+    return zN;
+  };
+  const fwd = run(1), bwd = run(-1);
+  let cf = 0, cb = 0;
+  for (let i = 1; i < n; i++) {
+    cf += Math.abs(fwd[i] - fwd[i - 1]);
+    cb += Math.abs(bwd[i] - bwd[i - 1]);
+  }
+  return smooth1D(cf <= cb ? fwd : bwd, 8);
 }
 
 function extractGoldenMask() {
@@ -3502,20 +3601,21 @@ function extractAll() {
   try {
     S.lineDrawing = lineEnhanceEnabled() && detectLineDrawing(S.rgb);
     if (S.lineDrawing) console.log('[LineEnhance] 白线黑底线稿，使用放宽亮度+先闭运算');
-    // 三视图：构建side/top深度表
-    if (S.inputMode === 'tri') {
-      setStatus('三视图深度对齐...');
-      try { processTriViews(); } catch(e){ console.error('TriView error:', e); S.triDepth = {side:null,top:null}; }
-    }
     setStatus('1/6 自动背景去除...');
-    if (S.bgEnabled && !S.lineDrawing) { try { buildBackgroundMask(); } catch(e){ console.error('Bg error:', e); S.bgMask = null; } }
-    else { S.bgMask = null; }
+    if (S.bgEnabled && !S.lineDrawing) { try { buildBackgroundMask(); } catch(e){ console.error('Bg error:', e); S.bgMask = null; syncBgPreviewToFront(); } }
+    else { S.bgMask = null; syncBgPreviewToFront(); }
     setStatus('2/6 HSV掩码...');
     extractGoldenMask();
 
     // 自适应参数：根据掩码特征自动调整形态学参数
     setStatus('2.5/6 自适应参数分析...');
     autoAdaptParams();
+
+    // 三视图：侧面/顶面骨架深度表（在自适应闭运算半径之后，骨架更连续）
+    if (S.inputMode === 'tri') {
+      setStatus('三视图深度对齐...');
+      try { processTriViews(); } catch(e){ console.error('TriView error:', e); S.triDepth = {side:null,top:null}; }
+    }
 
     setStatus('3/6 形态学固化...');
     solidifyMask();
@@ -3615,7 +3715,7 @@ function extractAll() {
 
     setStatus('6/6 RDP简化+B样条+面片生成...');
     smoothAllCurves();
-    try { matchFrontToSideCurves(); } catch(e) { console.error('TriMatch error:', e); S.triMatch = null; }
+    S.triMatch = null;
     try { S.curveLevels = classifyCurves(S.smoothedCurves, S.brightness, S.imgW, S.imgH); } catch(e) { console.error('Classify error:', e); }
     try { estimateCurveDepths(); } catch(e) { console.error('Depth error:', e); }
     S.curveEdits = {}; S.edit3d.selected=-1; S.edit3d.dragHandle=-1;
@@ -3629,7 +3729,7 @@ function extractAll() {
     drawEditor();
     updateCurveList();
     const ms = Math.round(performance.now() - t0);
-    const modeTxt = (S.inputMode==='tri' ? '三视图' : '单图') + (S.lineDrawing ? ' · 线稿' : '');
+    const modeTxt = (S.inputMode==='tri' ? '三视图' : '单图') + (S.lineDrawing ? ' · 线稿' : '') + (S.inputMode==='tri' && S.lineDrawing ? ' · 对极' : '');
     setStatus(`完成: ${S.smoothedCurves.length} 根曲线 · ${modeTxt} · ${ms}ms`);
     toast(`提取完成：${S.smoothedCurves.length} 根曲线（${ms}ms）`, 'ok');
   } catch(e) {
@@ -3766,19 +3866,11 @@ function buildCurveWorldPoints(cd, idx) {
     const xN = p[1]/S.imgW, yN = p[0]/S.imgH; // 归一化坐标（图像y向下）
 
     if (tri && tri.side) {
-      const match = (S.triMatch && S.triMatch[idx]) || null;
-      const pack = S.triSideCurves;
-      if (match && pack && pack.curves[match.sideIdx]) {
-        if (!cd._sideZN) {
-          cd._sideZN = sampleSideZAlongFront(curve, pack.curves[match.sideIdx], pack.w, pack.h, match.reversed);
-          cd._sideZN = smooth1D(cd._sideZN, 24);
-        }
-        const zN = cd._sideZN[pi];
-        z = (zN - 0.5) * 2 * depthRange;
+      if (S.lineDrawing) {
+        if (!cd._epiZN || cd._epiZN.length !== n) cd._epiZN = reconstructZEpipolar(curve);
+        z = (cd._epiZN[pi] - 0.5) * 2 * depthRange;
       } else {
-        const zSideN = S.lineDrawing
-          ? queryRowTableMedian(tri.side, yN)
-          : queryRowTable(tri.side, yN, xN);
+        const zSideN = queryRowTable(tri.side, yN, xN);
         let zN = (zSideN!=null) ? zSideN : xN;
         z = (zN - 0.5) * 2 * depthRange;
       }
@@ -3792,8 +3884,8 @@ function buildCurveWorldPoints(cd, idx) {
     const off = getEditOffset(idx, pi, n);
     pts.push({x:x+off.dx, y:y+off.dy, z:z+off.dz, t});
   }
-  if (tri && tri.side && pts.length > 8) {
-    const sm = smooth1D(pts.map(p => p.z), S.lineDrawing ? 18 : 6);
+  if (tri && tri.side && pts.length > 8 && !S.lineDrawing) {
+    const sm = smooth1D(pts.map(p => p.z), 6);
     for (let i = 0; i < pts.length; i++) pts[i].z = sm[i];
   }
   return pts;
@@ -3899,6 +3991,28 @@ function projectWorld(p, view) {
   return { x: view.cx + x1*view.sceneScale*persp, y: view.cy + y1*view.sceneScale*persp, z:z2, s:persp };
 }
 
+function drawRefImagePlane(ctx, view) {
+  if (!S.showRefImage || !S.rgb) return;
+  const data = S.rgb.data;
+  const w = S.imgW, h = S.imgH;
+  const step = Math.max(1, Math.round(Math.max(w, h) / 280));
+  const size = Math.max(1.3, step * view.sceneScale * 0.85);
+  ctx.save();
+  for (let y = 0; y < h; y += step) {
+    for (let x = 0; x < w; x += step) {
+      const i = (y * w + x) * 4;
+      const v = Math.max(data[i], data[i + 1], data[i + 2]);
+      if (v < 32) continue;
+      const p = projectWorld({ x: x - w / 2, y: y - h / 2, z: 0 }, view);
+      const a = Math.min(0.88, 0.25 + v / 255 * 0.7);
+      ctx.fillStyle = 'rgba(' + data[i] + ',' + data[i + 1] + ',' + data[i + 2] + ',' + a + ')';
+      const s = size * (p.s || 1);
+      ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
+    }
+  }
+  ctx.restore();
+}
+
 // ============================================================
 // 3D预览
 // ============================================================
@@ -3954,19 +4068,8 @@ function draw3DView() {
   const groundY3d = groundY - cy;
   drawGroundDisk(ctx, cx, cy, focal, cosX, sinX, cosY, sinY, S.imgW * 0.5, groundY3d, sceneScale);
 
-  // 绘制参考图（半透明原图，居中，与3D曲线同缩放）
-  if (S.showRefImage && S.rgb) {
-    if (!S._refCanvas) {
-      S._refCanvas = document.createElement('canvas');
-      S._refCanvas.width = S.imgW; S._refCanvas.height = S.imgH;
-      S._refCanvas.getContext('2d').putImageData(S.rgb, 0, 0);
-    }
-    ctx.globalAlpha = 0.25;
-    const refW = S.imgW * baseScale;
-    const refH = S.imgH * baseScale;
-    ctx.drawImage(S._refCanvas, cx - refW/2, cy - refH/2, refW, refH);
-    ctx.globalAlpha = 1;
-  }
+  // 参照图：贴在世界 z=0 的正面平面上（与正面 X-Y 对齐），旋转时跟着场景走，不是屏幕贴纸
+  drawRefImagePlane(ctx, view);
 
   // 分级颜色和样式
   const levelStyles = {
@@ -3983,7 +4086,7 @@ function draw3DView() {
     if (!S.showLevels[level - 1]) continue;
 
     const style = levelStyles[level];
-    const avgScale = pts.reduce((sum, p) => sum + p.scale, 0) / pts.length;
+    const avgScale = pts.reduce((sum, p) => sum + (p.s || 1), 0) / pts.length;
     const thick = S.lineDrawing ? 1.8 : 1;
     const alpha = Math.min(1, Math.max(0.2, style.alpha * avgScale));
     const lineWidth = Math.max(0.5, style.lineWidth * avgScale * thick);
@@ -4788,6 +4891,7 @@ function loadTriFile(view, file) {
         for(let i=0;i<d.length;i+=4) sum+=Math.max(d[i],d[i+1],d[i+2])/255;
         S.invertMask = (sum/(d.length/4))>0.5;
         drawCanvas('canvasOriginal', rgb);
+        syncBgPreviewToFront();
       }
       toast(`${ {front:'正面',side:'侧面',top:'顶面'}[view] }视图已加载`, 'ok');
     };
