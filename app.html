@@ -826,6 +826,33 @@ function queryRowTable(table, yN, xN) {
   return null;
 }
 
+function queryRowTableMedian(table, yN) {
+  if (!table) return null;
+  const y = Math.round(yN * (table.h - 1));
+  for (let r = 0; r < 12; r++) {
+    for (const yy of (r === 0 ? [y] : [y - r, y + r])) {
+      if (yy >= 0 && yy < table.h && table.rows[yy] && table.rows[yy].length) {
+        const arr = table.rows[yy];
+        return arr[(arr.length / 2) | 0];
+      }
+    }
+  }
+  return null;
+}
+
+function smooth1D(arr, radius) {
+  const n = arr.length, out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let s = 0, c = 0;
+    for (let k = -radius; k <= radius; k++) {
+      const j = i + k;
+      if (j >= 0 && j < n && Number.isFinite(arr[j])) { s += arr[j]; c++; }
+    }
+    out[i] = c ? s / c : arr[i];
+  }
+  return out;
+}
+
 // 处理上传的三视图：side/top 生成深度表
 function processTriViews() {
   S.triDepth = { side:null, top:null };
@@ -913,11 +940,13 @@ function autoAdaptParams() {
   let closeRadius, dilateRadius, minObjectSize, pruneLength, minPathLength;
 
   if (S.lineDrawing) {
-    closeRadius = Math.max(5, Math.round(6 * scaleFactor));
-    dilateRadius = 1;
+    closeRadius = Math.max(4, Math.round(5 * scaleFactor));
+    dilateRadius = 0;
     minObjectSize = Math.max(20, Math.round(30 * scaleFactor));
     pruneLength = Math.max(4, Math.round(6 * scaleFactor));
     minPathLength = Math.max(15, Math.round(20 * scaleFactor));
+    const rdpEl = document.getElementById('rdpEpsilon');
+    if (rdpEl) rdpEl.value = Math.max(parseFloat(rdpEl.value) || 8, 10);
   } else if (totalComponents <= 3) {
     // 少量大连通块：曲线比较完整，用小的形态学参数
     closeRadius = Math.max(1, Math.round(2 * scaleFactor));
@@ -3396,8 +3425,8 @@ function extractAll() {
         S._lastTraceMode = '方向场追踪';
         try {
           const p = getParams();
-          const ofMask = (S.lineDrawing && S.solid) ? S.solid : S.mask;
-          const ofMinB = S.lineDrawing ? 0.08 : p.brightLayer;
+          const ofMask = (S.lineDrawing && S.skeletonPruned) ? S.skeletonPruned : S.mask;
+          const ofMinB = S.lineDrawing ? 0.05 : p.brightLayer;
           let rawCurves = extractCurvesOrientationField(
             S.rgb, S.imgW, S.imgH, S.brightness, ofMask,
             ofMinB, 80, p.minLength
@@ -3599,10 +3628,12 @@ function buildCurveWorldPoints(cd, idx) {
 
     if (tri && tri.side) {
       // === 三视图深度重建 ===
-      const zSideN = queryRowTable(tri.side, yN, xN); // side: 行=y, 列=z
+      const zSideN = S.lineDrawing
+        ? queryRowTableMedian(tri.side, yN)
+        : queryRowTable(tri.side, yN, xN);
       let zN = (zSideN!=null) ? zSideN : xN;
       if (tri.top) {
-        const zTopN = queryColTableMedian(tri.top, xN); // top: 列=x, 行=z
+        const zTopN = queryColTableMedian(tri.top, xN);
         if (zTopN!=null) zN = 0.7*zN + 0.3*zTopN;
       }
       z = (zN - 0.5) * 2 * depthRange;
@@ -3615,6 +3646,10 @@ function buildCurveWorldPoints(cd, idx) {
     // 应用3D编辑偏移（手柄偏移按高斯平滑扩散到整条曲线）
     const off = getEditOffset(idx, pi, n);
     pts.push({x:x+off.dx, y:y+off.dy, z:z+off.dz, t});
+  }
+  if (tri && tri.side && pts.length > 8) {
+    const sm = smooth1D(pts.map(p => p.z), S.lineDrawing ? 18 : 6);
+    for (let i = 0; i < pts.length; i++) pts[i].z = sm[i];
   }
   return pts;
 }
