@@ -187,17 +187,17 @@
       <!-- 三视图模式 -->
       <div class="tri-slots" id="triInput">
         <div class="tri-slot" data-view="front">
-          <span class="tag">正面</span><span>Front · X-Y（必需）</span><span class="state">点击/拖入</span>
+          <span class="tag">正面</span><span>Front · X-Y（必需）</span><span class="state">未上传</span>
         </div>
         <div class="tri-slot" data-view="side">
-          <span class="tag">侧面</span><span>Side · Z-Y（提供深度）</span><span class="state">点击/拖入</span>
+          <span class="tag">侧面</span><span>Side · Z-Y（提供深度）</span><span class="state">未上传</span>
         </div>
         <div class="tri-slot" data-view="top">
-          <span class="tag">顶面</span><span>Top · X-Z（校正，可选）</span><span class="state">点击/拖入</span>
+          <span class="tag">顶面</span><span>Top · X-Z（校正，可选）</span><span class="state">未上传</span>
         </div>
-        <input type="file" id="triFileInput" accept="image/*" multiple style="display:none;">
+        <input type="file" id="triFileInput" accept="image/*" style="display:none;">
         <div style="font-size:11px;color:#888;line-height:1.5;margin-top:2px;">
-          单张拖到对应槽位；也可一次框选3张拖入（文件名含 front/side/top 或 正/侧/顶 会自动归位）。三视图需同尺度、根部对齐。
+          单张拖到对应槽位；也可一次拖入3张（文件名含 front/side/top 或 正/侧/顶 会自动归位）。三视图需同尺度、根部对齐。
         </div>
       </div>
 
@@ -228,11 +228,6 @@
     <div class="section">
       <div class="section-title">2. HSV 掩码</div>
       <div class="form-group">
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-          <input type="checkbox" id="autoThresh" checked> 自动亮度阈值（按每张图自适应，推荐白线/灰底）
-        </label>
-      </div>
-      <div class="form-group">
         <label>色相范围 <span class="val" id="hueVal">0.05 - 0.17</span></label>
         <input type="range" id="hueMin" min="0" max="0.5" step="0.01" value="0.05">
         <input type="range" id="hueMax" min="0" max="0.5" step="0.01" value="0.17" style="margin-top:4px;">
@@ -247,7 +242,7 @@
       </div>
       <div class="form-group">
         <label>亮度兜底阈值 <span class="val" id="brightVal">0.70</span></label>
-        <input type="range" id="brightThresh" min="0.2" max="1" step="0.02" value="0.70">
+        <input type="range" id="brightThresh" min="0.5" max="1" step="0.05" value="0.70">
       </div>
       <div class="form-group">
         <label>亮度分层阈值 <span class="val" id="layerVal">0.30</span></label>
@@ -269,7 +264,7 @@
       </div>
       <div class="form-group">
         <label>最小连通块 <span class="val" id="minObjVal">100</span></label>
-        <input type="range" id="minObjectSize" min="10" max="5000" step="2" value="100">
+        <input type="range" id="minObjectSize" min="50" max="5000" step="50" value="100">
       </div>
       <div class="form-group">
         <label>修剪毛刺长度 <span class="val" id="pruneVal">10</span></label>
@@ -440,7 +435,7 @@ const S = {
   curveDepths: [], // 每条曲线的深度值
   selectedCurve: -1,
   dragging: false, dragPoint: -1,
-  traceMode: 'smart', // 'of' = 方向场追踪, 'smart' = 智能端点追踪, 'angle' = 固定5根角度聚类
+  traceMode: 'of', // 'of' = 方向场追踪, 'smart' = 智能端点追踪, 'angle' = 固定5根角度聚类
   // 3D预览相关
   view3d: { rotX: -0.3, rotY: 0.1, zoom: 1.0, dragging: false, lastX: 0, lastY: 0 },
   // 3D编辑
@@ -530,50 +525,6 @@ function getParams() {
   };
 }
 
-// Otsu 大津法：在亮度(0..255)直方图上求前景/背景最佳分割阈值
-function otsuBrightnessThreshold(rgb) {
-  const d = rgb.data, N = rgb.width*rgb.height;
-  const hist = new Array(256).fill(0);
-  for (let i=0;i<N;i++) hist[Math.max(d[i*4],d[i*4+1],d[i*4+2])]++;
-  let sum=0; for(let t=0;t<256;t++) sum+=t*hist[t];
-  let sumB=0,wB=0,maxVar=-1,thr=128;
-  for(let t=0;t<256;t++){
-    wB+=hist[t]; if(wB===0)continue;
-    const wF=N-wB; if(wF===0)break;
-    sumB+=t*hist[t];
-    const mB=sumB/wB,mF=(sum-sumB)/wF;
-    const v=wB*wF*(mB-mF)*(mB-mF);
-    if(v>maxVar){maxVar=v;thr=t;}
-  }
-  return thr/255;
-}
-
-// 按当前主图自动设定亮度阈值（勾选自动时调用）
-function autoTuneThreshold() {
-  const cb = document.getElementById('autoThresh');
-  if (!cb || !cb.checked || !S.rgb) return;
-  let t = otsuBrightnessThreshold(S.rgb);
-  // 根据前景平均亮度决定是否提阈值：亮白线可提阈值减少抗锯齿噪点；淡色线保持Otsu原值确保完整捕获
-  const d = S.rgb.data, N = S.rgb.width*S.rgb.height;
-  let fgSum=0, fgCnt=0;
-  for (let i=0;i<N;i++){ const v=Math.max(d[i*4],d[i*4+1],d[i*4+2])/255; if (v >= t){fgSum+=v;fgCnt++;} }
-  const avgFg = fgCnt>0 ? fgSum/fgCnt : 0.5;
-  if (avgFg > 0.78) {
-    // 亮白线（平均亮度>200）：阈值上抬，只保留亮核心，减少抗锯齿边缘/噪点
-    t = Math.min(0.85, Math.max(0.40, t + 0.08));
-  } else {
-    // 淡色线：保持Otsu阈值（或微降），确保淡色线条完整捕获
-    t = Math.min(0.85, Math.max(0.20, t - 0.02));
-  }
-  const set=(id,v)=>{const el=document.getElementById(id);if(el)el.value=v.toFixed(2);};
-  set('brightThresh', t);
-  set('brightLayer', Math.max(0, t-0.12));
-  set('valMin', Math.max(0, t-0.15));
-  updateParamLabels();
-  console.log(`[AutoThresh] otsu=${t.toFixed(3)} avgFg=${avgFg.toFixed(2)}`);
-  return t;
-}
-
 function updateParamLabels() {
   try {
     const p = getParams();
@@ -620,7 +571,6 @@ function loadImage(file) {
       }
       S.invertMask = (sumV / (d.length / 4)) > 0.5;
       drawCanvas('canvasOriginal', S.rgb);
-      autoTuneThreshold();
       document.getElementById('uploadZone').classList.add('loaded');
       setStatus(`已加载: ${S.imgW}×${S.imgH}${S.invertMask ? ' (浅色背景，自动反色)' : ''}`);
       toast(`图片已加载 ${S.imgW}×${S.imgH}${S.invertMask?'，检测到浅色背景':''}`, 'ok', 1800);
@@ -667,42 +617,6 @@ function rgb2hsv(r, g, b) {
   const s = max === 0 ? 0 : d / max;
   const v = max;
   return [h, s, v];
-}
-
-// 判断是否为3D软件正交截图里的高饱和纯原色亮坐标轴（只抓极确定的，避免误杀抗锯齿淡线/金橙枝条）
-function isAxisColor(r, g, b) {
-  const arr=[r,g,b].sort((a,b)=>a-b);
-  // 单通道绝对主导，且第二高通道也很低（纯红/绿/蓝轴）；金橙色g通道中等，不会命中
-  return arr[2] > 120 && arr[1] < 85 && arr[2]-arr[1] > 70;
-}
-
-// 投影法移除贯穿画面的严格垂直/水平细轴（正交视图坐标轴；弯曲枝条不会命中）
-function removeAxisLines(mask, w, h) {
-  const colH = 0.55 * h, rowW = 0.55 * w;
-  // 列统计
-  for (let x=0;x<w;x++){
-    let cnt=0; for(let y=0;y<h;y++) if(mask[y*w+x])cnt++;
-    if(cnt < colH) continue;
-    // 该列贯穿：仅移除“孤立细点”（左右2px内无其它前景），保留有宽度的枝条
-    for(let y=0;y<h;y++){
-      const i=y*w+x; if(!mask[i])continue;
-      let side=0;
-      for(let dx=-2;dx<=2;dx++){if(dx===0)continue;const xx=x+dx;if(xx>=0&&xx<w&&mask[y*w+xx])side++;}
-      if(side===0) mask[i]=0;
-    }
-  }
-  // 行统计
-  for (let y=0;y<h;y++){
-    let cnt=0; for(let x=0;x<w;x++) if(mask[y*w+x])cnt++;
-    if(cnt < rowW) continue;
-    for(let x=0;x<w;x++){
-      const i=y*w+x; if(!mask[i])continue;
-      let side=0;
-      for(let dy=-2;dy<=2;dy++){if(dy===0)continue;const yy=y+dy;if(yy>=0&&yy<h&&mask[yy*w+x])side++;}
-      if(side===0) mask[i]=0;
-    }
-  }
-  return mask;
 }
 
 // ============================================================
@@ -754,7 +668,7 @@ function buildBackgroundMask() {
     const r=data[i*4],g=data[i*4+1],b=data[i*4+2];
     const [hue,sat,val]=rgb2hsv(r,g,b);
     const golden = hue>=p.hueMin&&hue<=p.hueMax&&sat>=p.satMin&&val>=p.valMin;
-    const muchBrighter = val > bgVal + 0.15;
+    const muchBrighter = val > bgVal + 0.22;
     return (golden || muchBrighter);
   };
   const seed = (x,y) => {
@@ -823,12 +737,10 @@ function computeMaskFromRgb(rgb, w, h, invert) {
     const r=data[i*4],g=data[i*4+1],b=data[i*4+2];
     const [hue,sat,val]=rgb2hsv(r,g,b);
     let m = (((hue>=p.hueMin&&hue<=p.hueMax)&&sat>=p.satMin&&val>=p.valMin)||val>=p.brightThresh)&&val>=p.brightLayer ?1:0;
-    if (isAxisColor(r,g,b)) m=0; // 剔除坐标轴
     if (invert) m = m?0:1;
     if (localBg && colorDist(r,g,b,localBg[0],localBg[1],localBg[2]) < tol) m=0;
     mask[i]=m;
   }
-  removeAxisLines(mask, w, h);
   return mask;
 }
 
@@ -890,12 +802,10 @@ function extractGoldenMask() {
     const brightMask = val >= p.brightThresh;
     const layerMask = val >= p.brightLayer; // 亮度分层
     let m = ((hueMask && satMask && valMask) || brightMask) && layerMask ? 1 : 0;
-    if (isAxisColor(r,g,b)) m = 0; // 剔除3D软件红/绿/蓝坐标轴
     if (S.invertMask) m = m ? 0 : 1; // 浅色背景反转：暗线条为目标
     if (S.bgEnabled && S.bgMask && S.bgMask[i]) m = 0; // 剔除自动检测到的背景
     mask[i] = m;
   }
-  removeAxisLines(mask, w, h); // 移除正交视图贯穿坐标轴
   S.mask = mask;
   S.brightness = brightness; // 保存亮度数组
   drawBinary('canvasMask', mask, w, h);
@@ -951,17 +861,8 @@ function autoAdaptParams() {
 
   // 3. 自适应调整参数
   let closeRadius, dilateRadius, minObjectSize, pruneLength, minPathLength;
-  const avgComp = totalPixels / Math.max(1,totalComponents);   // 平均连通块大小
-  const largestRatio = largestComponent / Math.max(1,totalPixels);
-  // 碎裂淡线：连通块多且平均小（抗锯齿导致线条断续）；连贯粗线连通块少，不会误判
-  const fragmented = totalComponents > 20 && avgComp < 25;
-  S._fragmented = fragmented;
 
-  if (fragmented) {
-    // 严重碎裂（淡色细线/抗锯齿线束）：强闭运算桥接成束，再清理
-    closeRadius = 10; dilateRadius = 3;
-    minObjectSize = 24; pruneLength = 4; minPathLength = 14;
-  } else if (totalComponents <= 3) {
+  if (totalComponents <= 3) {
     // 少量大连通块：曲线比较完整，用小的形态学参数
     closeRadius = Math.max(1, Math.round(2 * scaleFactor));
     dilateRadius = 0;
@@ -975,20 +876,13 @@ function autoAdaptParams() {
     minObjectSize = Math.round(80 * scaleFactor);
     pruneLength = Math.max(5, Math.round(8 * scaleFactor));
     minPathLength = Math.max(20, Math.round(25 * scaleFactor));
-  } else if (largestRatio > 0.5) {
-    // 块数多但最大块占主体：线条本身连贯，小碎块是噪点/抗锯齿，用温和参数避免过度膨胀
-    closeRadius = Math.max(1, Math.round(2 * scaleFactor));
-    dilateRadius = 0;
-    minObjectSize = Math.round(40 * scaleFactor);
-    pruneLength = Math.max(4, Math.round(6 * scaleFactor));
-    minPathLength = Math.max(18, Math.round(22 * scaleFactor));
   } else {
-    // 大量小连通块且无主体：曲线断裂，用更大的闭运算
-    closeRadius = Math.max(4, Math.round(5 * scaleFactor));
+    // 大量小连通块：曲线断裂严重，需要更大的闭运算
+    closeRadius = Math.max(3, Math.round(4 * scaleFactor));
     dilateRadius = 1;
-    minObjectSize = Math.round(50 * scaleFactor);
+    minObjectSize = Math.round(60 * scaleFactor);
     pruneLength = Math.max(5, Math.round(8 * scaleFactor));
-    minPathLength = Math.max(18, Math.round(20 * scaleFactor));
+    minPathLength = Math.max(20, Math.round(20 * scaleFactor));
   }
 
   // 4. 更新UI滑条
@@ -1080,14 +974,10 @@ function removeSmallObjects(binary, w, h, minSize) {
 function solidifyMask() {
   const p = getParams();
   const w = S.imgW, h = S.imgH;
-  let result = S.mask;
-  // 第一步预清理：普通图用正常阈值先清掉根部周围碎块（让闭运算只桥接主体，避免根部融合块产生假曲线）；
-  // 严重碎裂的淡色细线图（fragmented）细丝段本身很小，只能用极小阈值，避免在闭运算前被删光。
-  const preMin = S._fragmented ? Math.min(8, p.minObjectSize) : p.minObjectSize;
-  result = removeSmallObjects(result, w, h, preMin);
+  let result = removeSmallObjects(S.mask, w, h, p.minObjectSize);
   if (p.closeRadius > 0) result = binaryClose(result, w, h, createDisk(p.closeRadius));
   if (p.dilateRadius > 0) result = binaryDilate(result, w, h, createDisk(p.dilateRadius));
-  result = removeSmallObjects(result, w, h, p.minObjectSize);
+  result = removeSmallObjects(result, w, h, p.minObjectSize * 2);
   S.solid = result;
   drawBinary('canvasSolid', result, w, h);
   return result;
@@ -3311,8 +3201,6 @@ function extractAll() {
   const t0 = performance.now();
   setTimeout(() => {
   try {
-    // 自动亮度阈值（每张图自适应，对白线/灰底尤其重要）
-    try { autoTuneThreshold(); } catch(e){ console.error('AutoThresh error:', e); }
     // 三视图：构建side/top深度表
     if (S.inputMode === 'tri') {
       setStatus('三视图深度对齐...');
@@ -3334,25 +3222,6 @@ function extractAll() {
     S.skeleton = zhangSuen(S.solid, S.imgW, S.imgH);
     S.skeletonPruned = pruneSkeleton(S.skeleton, S.imgW, S.imgH, getParams().pruneLength);
     drawBinary('canvasSkeleton', S.skeletonPruned, S.imgW, S.imgH);
-
-    // 自动选择追踪模式：碎裂淡线用方向场追踪(可跨间隙)，连贯线条用智能端点追踪(长曲线更完整)
-    if (S._fragmented) {
-      if (S.traceMode !== 'of') {
-        S.traceMode = 'of';
-        document.getElementById('modeSmart').style.background = '#333';
-        document.getElementById('modeSmart').style.color = '';
-        document.getElementById('modeAngle').style.background = '#333';
-        document.getElementById('modeAngle').style.color = '';
-      }
-    } else {
-      if (S.traceMode !== 'smart' && S.traceMode !== 'angle') {
-        S.traceMode = 'smart';
-        document.getElementById('modeSmart').style.background = '#FFD700';
-        document.getElementById('modeSmart').style.color = '#000';
-        document.getElementById('modeAngle').style.background = '#333';
-        document.getElementById('modeAngle').style.color = '';
-      }
-    }
 
     if (S.traceMode === 'of') {
       // 方向场追踪（带间隙跨越、方向惯性、短段连接）
@@ -3439,7 +3308,6 @@ function extractAll() {
 
     setStatus('6/6 RDP简化+B样条+面片生成...');
     smoothAllCurves();
-    filterDegenerateCurves();
     try { S.curveLevels = classifyCurves(S.smoothedCurves, S.brightness, S.imgW, S.imgH); } catch(e) { console.error('Classify error:', e); }
     try { estimateCurveDepths(); } catch(e) { console.error('Depth error:', e); }
     S.curveEdits = {}; S.edit3d.selected=-1; S.edit3d.dragHandle=-1;
@@ -3547,37 +3415,9 @@ const V3 = {
   norm:a=>{const l=Math.hypot(a.x,a.y,a.z)||1;return {x:a.x/l,y:a.y/l,z:a.z/l};}
 };
 
-// 剔除退化曲线：粗线根部融合块会产生始终挤在根部、沿块边界打转的假曲线。
-// 真“从根部长出”的枝条必然有显著的径向伸展（到根部中心的最远距离）。
-function filterDegenerateCurves() {
-  if (!S.smoothedCurves || !S.smoothedCurves.length) return;
-  const w=S.imgW, h=S.imgH;
-  const diag = Math.hypot(w, h);
-  const rootX = w/2, rootY = h*0.85;      // 根部中心
-  const minReach = diag * 0.08;           // 尖端至少离根部这么远
-  const minSpan = diag * 0.03;
-  const before = S.smoothedCurves.length;
-  S.smoothedCurves = S.smoothedCurves.filter(cd => {
-    const p = cd.smoothed; if (!p || p.length < 2) return false;
-    let minY=1e9,maxY=-1e9,minX=1e9,maxX=-1e9,pathLen=0,maxReach=0;
-    for (let i=0;i<p.length;i++){
-      const yy=p[i][0],xx=p[i][1];
-      if(yy<minY)minY=yy;if(yy>maxY)maxY=yy;if(xx<minX)minX=xx;if(xx>maxX)maxX=xx;
-      if(i>0)pathLen+=Math.hypot(yy-p[i-1][0],xx-p[i-1][1]);
-      const rch=Math.hypot(xx-rootX, yy-rootY); if(rch>maxReach)maxReach=rch;
-    }
-    const span = Math.hypot(maxY-minY, maxX-minX);
-    if (span < minSpan) return false;                    // 绝对跨度过小
-    if (pathLen/Math.max(1,span) > 6) return false;      // 来回打转
-    if (maxReach < minReach) return false;               // 始终挤在根部
-    return true;
-  });
-  const removed = before - S.smoothedCurves.length;
-  if (removed) console.log(`[Filter] 剔除 ${removed} 条根部退化曲线`);
-}
-
 // 3D编辑：手柄偏移按高斯权重平滑扩散到曲线各点
-function getEditOffset(idx, pi, n) {  const edits = S.curveEdits[idx];
+function getEditOffset(idx, pi, n) {
+  const edits = S.curveEdits[idx];
   if (!edits) return {dx:0,dy:0,dz:0};
   const keys = Object.keys(edits);
   if (!keys.length) return {dx:0,dy:0,dz:0};
@@ -4586,8 +4426,8 @@ document.getElementById('modeTri').addEventListener('click', ()=>switchInputMode
 
 // 三视图槽位上传（点击 + 拖拽）
 let _activeTriSlot = null;
+
 function loadTriFile(view, file) {
-  if (!file || !file.type.startsWith('image/')) { toast('请拖入图片文件','err'); return; }
   const reader = new FileReader();
   reader.onload = ev => {
     const img = new Image();
@@ -4601,7 +4441,6 @@ function loadTriFile(view, file) {
       const slot = document.querySelector(`.tri-slot[data-view="${view}"]`);
       slot.classList.add('filled');
       slot.querySelector('.state').textContent = `${img.width}×${img.height} ✓`;
-      // front 同时作为主图
       if (view==='front') {
         S.image = img; S.imgW = img.width; S.imgH = img.height;
         S.rgb = rgb; S._refCanvas = null;
@@ -4609,7 +4448,6 @@ function loadTriFile(view, file) {
         for(let i=0;i<d.length;i+=4) sum+=Math.max(d[i],d[i+1],d[i+2])/255;
         S.invertMask = (sum/(d.length/4))>0.5;
         drawCanvas('canvasOriginal', rgb);
-        autoTuneThreshold();
       }
       toast(`${ {front:'正面',side:'侧面',top:'顶面'}[view] }视图已加载`, 'ok');
     };
@@ -4617,57 +4455,54 @@ function loadTriFile(view, file) {
   };
   reader.readAsDataURL(file);
 }
-// 按文件名猜测视图
-function guessTriView(name){
-  const n=name.toLowerCase();
-  if(/(front|正|^f|_f|\bf\b)/.test(n))return 'front';
-  if(/(side|侧|^s|_s|\bs\b|left|right)/.test(n))return 'side';
-  if(/(top|顶|^t|_t|\bt\b)/.test(n))return 'top';
+
+function guessTriView(name) {
+  const n = name.toLowerCase();
+  if (/(front|正|^f|_f|\bf\b)/.test(n)) return 'front';
+  if (/(side|侧|^s|_s|\bs\b|left|right)/.test(n)) return 'side';
+  if (/(top|顶|^t|_t|\bt\b)/.test(n)) return 'top';
   return null;
 }
+
+function batchLoadTri(files) {
+  const order = ['front','side','top'];
+  const used = new Set();
+  files.forEach(f => { const v = guessTriView(f.name); if (v && !used.has(v)) { used.add(v); loadTriFile(v, f); } });
+  files.forEach(f => {
+    const gv = guessTriView(f.name);
+    if (gv && used.has(gv) && files.filter(x => guessTriView(x.name) === gv).length === 1) return;
+    const empty = order.find(v => ![...document.querySelectorAll('.tri-slot.filled')].some(s => s.dataset.view === v) && !used.has(v));
+    if (empty) { used.add(empty); loadTriFile(empty, f); }
+  });
+  toast(`已批量载入 ${files.length} 张，请核对正/侧/顶归属`, 'ok', 2200);
+}
+
 document.querySelectorAll('.tri-slot').forEach(slot => {
   const view = slot.dataset.view;
-  // 点击选择
   slot.addEventListener('click', () => {
     _activeTriSlot = view;
     document.getElementById('triFileInput').click();
   });
-  // 拖拽
   slot.addEventListener('dragover', e => { e.preventDefault(); slot.style.borderColor='#ffd700'; slot.style.background='rgba(255,215,0,0.08)'; });
   slot.addEventListener('dragleave', () => { slot.style.borderColor=''; slot.style.background=''; });
   slot.addEventListener('drop', e => {
     e.preventDefault(); slot.style.borderColor=''; slot.style.background='';
-    const files=[...e.dataTransfer.files].filter(f=>f.type.startsWith('image/'));
-    if(!files.length){toast('未发现图片文件','err');return;}
-    if(files.length===1){ loadTriFile(view, files[0]); return; }
-    // 多文件：优先按文件名匹配，剩余按 front/side/top 顺序补
+    const files = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
+    if (!files.length) { toast('未发现图片文件','err'); return; }
+    if (files.length === 1) { loadTriFile(view, files[0]); return; }
     batchLoadTri(files);
   });
 });
-// 批量拖入：文件名匹配 + 顺序补位
-function batchLoadTri(files){
-  const order=['front','side','top'];
-  const used=new Set();
-  // 第一轮：文件名匹配
-  files.forEach(f=>{ const v=guessTriView(f.name); if(v&&!used.has(v)){used.add(v);loadTriFile(v,f);} });
-  // 第二轮：未匹配文件按空缺顺序补
-  files.forEach(f=>{
-    const gv=guessTriView(f.name);
-    if(gv&&used.has(gv)&&files.filter(x=>guessTriView(x.name)===gv).length===1)return;
-    const empty=order.find(v=>![...document.querySelectorAll('.tri-slot.filled')].some(s=>s.dataset.view===v)&&!used.has(v));
-    if(empty){used.add(empty);loadTriFile(empty,f);}
-  });
-  toast(`已批量载入 ${files.length} 张，请核对正/侧/顶归属`,'ok',2200);
-}
-// 整个三视图区也可接收多文件拖入
-const triInputBox=document.getElementById('triInput');
-triInputBox.addEventListener('dragover',e=>{e.preventDefault();});
-triInputBox.addEventListener('drop',e=>{
-  if(e.target.closest('.tri-slot'))return; // 槽位自己处理
+
+const triInputBox = document.getElementById('triInput');
+triInputBox.addEventListener('dragover', e => { e.preventDefault(); });
+triInputBox.addEventListener('drop', e => {
+  if (e.target.closest('.tri-slot')) return;
   e.preventDefault();
-  const files=[...e.dataTransfer.files].filter(f=>f.type.startsWith('image/'));
-  if(files.length)batchLoadTri(files);
+  const files = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
+  if (files.length) batchLoadTri(files);
 });
+
 document.getElementById('triFileInput').addEventListener('change', e => {
   const file = e.target.files[0];
   if (!file || !_activeTriSlot) return;
