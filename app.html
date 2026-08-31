@@ -160,7 +160,7 @@
 
 <header>
   <h1>Curve Extractor</h1>
-  <span class="subtitle">v1.4.14 · 正交对照只画中心线，面片在拖转视角时显示</span>
+  <span class="subtitle">v1.4.15 · 正/侧/俯全部曲线亮黄显示，不再把分枝藏成暗线</span>
   <span class="status" id="status">就绪</span>
 </header>
 
@@ -4233,7 +4233,7 @@ function extractAll() {
             ? traceStrokesHuman(S.skeletonPruned, S.imgW, S.imgH, minLen)
             : extractCurvesSkeletonGraph(S.skeletonPruned, S.imgW, S.imgH, minLen);
           if (!S.lineDrawing) rawCurves = connectShortSegmentsV2(rawCurves, S.imgW, S.imgH);
-          if (S.lineDrawing) rawCurves = bundleOverdrawnStrokes(rawCurves, S.imgW, S.imgH, S.inputMode === 'tri' ? 0.08 : 0.04);
+          if (S.lineDrawing) rawCurves = bundleOverdrawnStrokes(rawCurves, S.imgW, S.imgH, 0.032);
           rawCurves = deduplicateCurves(rawCurves, S.brightness, S.imgW, S.imgH, S.lineDrawing ? 12 : 6);
           if (S.lineDrawing) rawCurves = filterLabelCurves(rawCurves, S.imgW, S.imgH);
           S.curves = rawCurves.map((curve, i) => {
@@ -4729,9 +4729,9 @@ function drawOrthoBlueprint(ctx, W, H) {
   S._last3D = { curves3d, view: { cx, cy, sceneScale: scale, ortho: true, focal: 800, cosX: 1, sinX: 0, cosY: 1, sinY: 0 }, W, H };
 
   const levelStyles = {
-    1: { color: '#FFD700', lineWidth: 2.2, alpha: 0.95 },
-    2: { color: '#FFA500', lineWidth: 1.6, alpha: 0.9 },
-    3: { color: '#C9A227', lineWidth: 1.2, alpha: 0.85 }
+    1: { color: '#FFD700', lineWidth: 2.4, alpha: 0.95 },
+    2: { color: '#FFD700', lineWidth: 2.2, alpha: 0.95 },
+    3: { color: '#FFD700', lineWidth: 2.0, alpha: 0.95 }
   };
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   for (const curve of curves3d) {
