@@ -160,7 +160,7 @@
 
 <header>
   <h1>Curve Extractor</h1>
-  <span class="subtitle">v1.4.17 · 线稿按走向惯性过交叉口；可在曲线页点选补一笔</span>
+  <span class="subtitle">v1.4.18 · 每条正面线单独配侧面深度，不再共用台阶</span>
   <span class="status" id="status">就绪</span>
 </header>
 
@@ -198,7 +198,7 @@
         <input type="file" id="triFileInput" accept="image/*" style="display:none;">
         <div style="font-size:11px;color:#888;line-height:1.5;margin-top:2px;">
           单张拖到对应槽位；也可一次拖入3张（文件名含 front/side/top 或 正/侧/顶 会自动归位）。<br>
-          正面决定左右/上下，侧面决定前后。线稿按走向穿过交叉点，交叉是两条线交过，不会拐成圈。
+          正面定左右/上下，侧面定前后。每条正面线只配一条侧面线，避免所有线共用一个台阶深度。三张手绘不是同一条空间线时，俯视对不齐。
         </div>
       </div>
 
@@ -863,6 +863,23 @@ function queryRowTableMedian(table, yN) {
   return null;
 }
 
+function stampPolylineMask(curves, w, h, r) {
+  const m = new Uint8Array(w * h);
+  const rad = Math.max(0, r | 0);
+  for (const c of curves || []) {
+    for (let i = 0; i < c.length; i++) {
+      const y = Math.round(c[i][0]), x = Math.round(c[i][1]);
+      for (let dy = -rad; dy <= rad; dy++) {
+        for (let dx = -rad; dx <= rad; dx++) {
+          const yy = y + dy, xx = x + dx;
+          if (yy >= 0 && xx >= 0 && yy < h && xx < w) m[yy * w + xx] = 1;
+        }
+      }
+    }
+  }
+  return m;
+}
+
 function smooth1D(arr, radius) {
   const n = arr.length, out = new Float32Array(n);
   for (let i = 0; i < n; i++) {
@@ -880,7 +897,10 @@ function smooth1D(arr, radius) {
 function processTriViews() {
   S.triDepth = { side:null, top:null };
   S.triSideCurves = null;
+  S.triTopCurves = null;
   S.triTopCols = null;
+  S.triMatch = null;
+  S.triTopMatch = null;
   S._sideZCurve = null;
   ['side','top'].forEach(view=>{
     const rgb = S.triRgb[view];
@@ -896,7 +916,6 @@ function processTriViews() {
     try {
       const pack = extractLineCurvesFromRgb(S.triRgb.side);
       S.triSideCurves = pack;
-      S.triDepth.side = buildRowTable(pack.skel, pack.w, pack.h);
       console.log(`[TriView] 侧面走向曲线 ${pack.curves.length} 条`);
     } catch (e) {
       console.error('Side curve extract error:', e);
@@ -906,8 +925,10 @@ function processTriViews() {
   if (S.lineDrawing && S.triRgb.top) {
     try {
       const pack = extractLineCurvesFromRgb(S.triRgb.top);
-      S.triTopCols = buildColTable(pack.skel, pack.w, pack.h);
-      S.triDepth.top = buildRowTable(pack.skel, pack.w, pack.h);
+      S.triTopCurves = pack;
+      const ink = stampPolylineMask(pack.curves, pack.w, pack.h, 1);
+      S.triTopCols = buildColTable(ink, pack.w, pack.h);
+      S.triDepth.top = buildRowTable(ink, pack.w, pack.h);
     } catch (e) {
       console.error('Top skeleton error:', e);
       S.triTopCols = null;
@@ -1077,16 +1098,18 @@ function matchFrontToSideCurves() {
   for (const fi of order) {
     const pts = S.smoothedCurves[fi].smoothed || S.smoothedCurves[fi].points;
     const fy = curveYSpan(pts, S.imgH);
-    const fLen = pts.length;
-    let best = -1, bestScore = 0.12, bestRev = false;
+    const fx = curveXSpan(pts, S.imgW);
+    const fVert = fy.span >= fx.span * 0.95;
+    let best = -1, bestScore = 0.08, bestRev = false;
     for (let si = 0; si < sidePack.curves.length; si++) {
       if (used[si]) continue;
       const sc = sidePack.curves[si];
       const sy = curveYSpan(sc, sidePack.h);
+      const sx = curveXSpan(sc, sidePack.w);
+      const sVert = sy.span >= sx.span * 0.95;
       const ov = Math.max(0, Math.min(fy.ymax, sy.ymax) - Math.max(fy.ymin, sy.ymin));
-      const spanPen = ov / Math.max(fy.span, sy.span);
-      const lenPen = Math.min(fLen, sc.length) / Math.max(fLen, sc.length);
-      const score = spanPen * (0.55 + 0.45 * lenPen);
+      let score = (ov / Math.max(fy.span, sy.span)) * (0.5 + 0.5 * Math.min(pts.length, sc.length) / Math.max(pts.length, sc.length));
+      if (fVert === sVert) score *= 1.7; else score *= 0.4;
       if (score <= bestScore) continue;
       const y0 = pts[0][0] / S.imgH, y1 = pts[pts.length - 1][0] / S.imgH;
       const s0 = sc[0][0] / sidePack.h, s1 = sc[sc.length - 1][0] / sidePack.h;
@@ -1098,7 +1121,47 @@ function matchFrontToSideCurves() {
     used[best] = 1;
     S.triMatch[fi] = { sideIdx: best, reversed: bestRev };
   }
-  console.log('[TriMatch]', S.triMatch.map(m => m ? m.sideIdx : -1));
+  console.log('[TriMatch side]', S.triMatch.map(m => m ? m.sideIdx : -1));
+}
+
+function matchFrontToTopCurves() {
+  S.triTopMatch = null;
+  const topPack = S.triTopCurves;
+  if (!S.lineDrawing || !topPack || !S.smoothedCurves || !S.smoothedCurves.length) return;
+  const used = new Uint8Array(topPack.curves.length);
+  S.triTopMatch = new Array(S.smoothedCurves.length).fill(null);
+  const order = S.smoothedCurves.map((_, i) => i).sort((a, b) => {
+    const la = (S.smoothedCurves[a].smoothed || []).length;
+    const lb = (S.smoothedCurves[b].smoothed || []).length;
+    return lb - la;
+  });
+  for (const fi of order) {
+    const pts = S.smoothedCurves[fi].smoothed || S.smoothedCurves[fi].points;
+    const fx = curveXSpan(pts, S.imgW);
+    const fy = curveYSpan(pts, S.imgH);
+    const fHoriz = fx.span >= fy.span * 0.95;
+    let best = -1, bestScore = 0.08, bestRev = false;
+    for (let ti = 0; ti < topPack.curves.length; ti++) {
+      if (used[ti]) continue;
+      const tc = topPack.curves[ti];
+      const tx = curveXSpan(tc, topPack.w);
+      const tz = curveYSpan(tc, topPack.h);
+      const tHoriz = tx.span >= tz.span * 0.95;
+      const ov = Math.max(0, Math.min(fx.xmax, tx.xmax) - Math.max(fx.xmin, tx.xmin));
+      let score = (ov / Math.max(fx.span, tx.span)) * (0.5 + 0.5 * Math.min(pts.length, tc.length) / Math.max(pts.length, tc.length));
+      if (fHoriz === tHoriz) score *= 1.7; else score *= 0.4;
+      if (score <= bestScore) continue;
+      const x0 = pts[0][1] / S.imgW, x1 = pts[pts.length - 1][1] / S.imgW;
+      const t0 = tc[0][1] / topPack.w, t1 = tc[tc.length - 1][1] / topPack.w;
+      best = ti;
+      bestScore = score;
+      bestRev = (Math.abs(x0 - t1) + Math.abs(x1 - t0)) < (Math.abs(x0 - t0) + Math.abs(x1 - t1));
+    }
+    if (best < 0) continue;
+    used[best] = 1;
+    S.triTopMatch[fi] = { topIdx: best, reversed: bestRev };
+  }
+  console.log('[TriMatch top]', S.triTopMatch.map(m => m ? m.topIdx : -1));
 }
 
 function polylineArcParam(pts) {
@@ -1284,6 +1347,29 @@ function interpolateXAtY(pts, yPix) {
   return best < Math.max(28, packFallbackY()) ? [bx] : [];
 }
 
+function interpolateYAtX(pts, xPix) {
+  const ys = [];
+  for (let i = 1; i < pts.length; i++) {
+    const x0 = pts[i - 1][1], x1 = pts[i][1];
+    const minx = Math.min(x0, x1), maxx = Math.max(x0, x1);
+    if (xPix < minx - 2 || xPix > maxx + 2) continue;
+    if (Math.abs(x1 - x0) < 1e-6) ys.push((pts[i - 1][0] + pts[i][0]) / 2);
+    else {
+      const a = (xPix - x0) / (x1 - x0);
+      if (a >= -0.2 && a <= 1.2) ys.push(pts[i - 1][0] + a * (pts[i][0] - pts[i - 1][0]));
+    }
+  }
+  if (ys.length) return ys;
+  let best = 1e9, by = pts[0][0];
+  for (let i = 0; i < pts.length; i++) {
+    const d = Math.abs(pts[i][1] - xPix);
+    if (d < best) { best = d; by = pts[i][0]; }
+  }
+  const pack = S.triTopCurves;
+  const lim = pack ? Math.max(28, pack.w * 0.04) : 36;
+  return best < lim ? [by] : [];
+}
+
 function packFallbackY() {
   return S.triSideCurves ? Math.max(28, S.triSideCurves.h * 0.04) : 36;
 }
@@ -1366,60 +1452,163 @@ function dominantSideCurve() {
   return S._sideZCurve;
 }
 
-function pickSideCurveForFront(frontPts) {
+function matchedSideCurve(idx, frontPts) {
   const pack = S.triSideCurves;
-  if (!pack || !pack.curves || !pack.curves.length) return dominantSideCurve();
+  if (pack && S.triMatch && idx != null && S.triMatch[idx]) {
+    const c = pack.curves[S.triMatch[idx].sideIdx];
+    if (c) return S.triMatch[idx].reversed ? c.slice().reverse() : c;
+  }
+  if (!pack || !pack.curves || !frontPts) return dominantSideCurve();
   const fy = curveYSpan(frontPts, S.imgH);
+  const fx = curveXSpan(frontPts, S.imgW);
+  const fVert = fy.span >= fx.span * 0.95;
   let best = null, bestS = -1;
   for (let i = 0; i < pack.curves.length; i++) {
     const c = pack.curves[i];
     const sy = curveYSpan(c, pack.h);
-    const xs = curveXSpan(c, pack.w);
+    const sx = curveXSpan(c, pack.w);
+    const sVert = sy.span >= sx.span * 0.95;
     const ov = Math.max(0, Math.min(fy.ymax, sy.ymax) - Math.max(fy.ymin, sy.ymin));
-    const score = (ov + 0.02) * (0.25 + xs.span) * Math.log(2 + c.length);
+    let score = ov * (0.3 + Math.min(sy.span, fy.span));
+    if (fVert === sVert) score *= 1.6;
     if (score > bestS) { bestS = score; best = c; }
   }
   return best || dominantSideCurve();
 }
 
-function reconstructZTwoSurface(frontPts) {
+function matchedTopCurve(idx) {
+  const pack = S.triTopCurves;
+  if (!pack || !S.triTopMatch || idx == null || !S.triTopMatch[idx]) return null;
+  const c = pack.curves[S.triTopMatch[idx].topIdx];
+  if (!c) return null;
+  return S.triTopMatch[idx].reversed ? c.slice().reverse() : c;
+}
+
+function pickZFromList(vals, prev, scale) {
+  if (!vals || !vals.length) return null;
+  let z = vals[0] / scale, bd = 1e9;
+  if (prev == null) return z;
+  for (let k = 0; k < vals.length; k++) {
+    const zn = vals[k] / scale;
+    const d = Math.abs(zn - prev);
+    if (d < bd) { bd = d; z = zn; }
+  }
+  return z;
+}
+
+function lookupSideZN(frontPts, i, idx, prev) {
   const pack = S.triSideCurves;
-  const side = pickSideCurveForFront(frontPts);
-  if (!side) return reconstructZEpipolar(frontPts);
+  const yN = frontPts[i][0] / S.imgH;
+  const side = matchedSideCurve(idx, frontPts);
+  if (pack && side) {
+    const z = pickZFromList(interpolateXAtY(side, yN * (pack.h - 1)), prev, Math.max(1, pack.w - 1));
+    if (z != null) return z;
+  }
+  const cands = zCandsAtY(S.triDepth && S.triDepth.side, yN, 6);
+  if (!cands.length) return null;
+  let z = cands[0], bd = 1e9;
+  for (let k = 0; k < cands.length; k++) {
+    const d = prev == null ? Math.abs(cands[k] - 0.5) : Math.abs(cands[k] - prev);
+    if (d < bd) { bd = d; z = cands[k]; }
+  }
+  return z;
+}
+
+function lookupTopZN(frontPts, i, idx, prev) {
+  const pack = S.triTopCurves;
+  const align = S.triAlign;
+  const xN0 = frontPts[i][1] / S.imgW;
+  const xN = align ? mapNorm(xN0, align.front.xminN, align.front.xmaxN, align.topX.xminN, align.topX.xmaxN) : xN0;
+  const top = matchedTopCurve(idx);
+  if (pack && top) {
+    let z = pickZFromList(interpolateYAtX(top, xN * (pack.w - 1)), prev, Math.max(1, pack.h - 1));
+    if (z != null) {
+      if (S._topZFlip) z = 1 - z;
+      return z;
+    }
+  }
+  const cands = zCandsAtX(S.triTopCols, xN, 6);
+  if (!cands.length) return null;
+  let z = cands[0], bd = 1e9;
+  for (let k = 0; k < cands.length; k++) {
+    let cz = S._topZFlip ? 1 - cands[k] : cands[k];
+    const d = prev == null ? Math.abs(cz - 0.5) : Math.abs(cz - prev);
+    if (d < bd) { bd = d; z = cz; }
+  }
+  return z;
+}
+
+function samplePolylineAtT(pts, tParam) {
+  const t = polylineArcParam(pts);
+  const n = pts.length;
+  if (n < 2) return pts[0];
+  const target = Math.max(0, Math.min(1, tParam));
+  let j = 0;
+  while (j < n - 2 && t[j + 1] < target) j++;
+  const den = (t[j + 1] - t[j]) || 1;
+  const a = (target - t[j]) / den;
+  return [pts[j][0] * (1 - a) + pts[j + 1][0] * a, pts[j][1] * (1 - a) + pts[j + 1][1] * a];
+}
+
+function zFromArcLength(frontPts, sidePts, packW) {
+  const tf = polylineArcParam(frontPts);
+  const zN = new Float32Array(frontPts.length);
+  const scale = Math.max(1, packW - 1);
+  for (let i = 0; i < frontPts.length; i++) {
+    zN[i] = samplePolylineAtT(sidePts, tf[i])[1] / scale;
+  }
+  return zN;
+}
+
+function curveIsVertical(pts, h, w) {
+  const y = curveYSpan(pts, h), x = curveXSpan(pts, w);
+  return y.span >= x.span * 0.95;
+}
+
+function bestSideCurveOfKind(wantVertical, frontPts) {
+  const pack = S.triSideCurves;
+  if (!pack || !pack.curves) return null;
+  let best = null, bestS = -1;
+  for (let i = 0; i < pack.curves.length; i++) {
+    const c = pack.curves[i];
+    const ys = curveYSpan(c, pack.h);
+    const xs = curveXSpan(c, pack.w);
+    const isV = ys.span >= xs.span * 0.9;
+    if (isV !== !!wantVertical) continue;
+    const score = (wantVertical ? ys.span * ys.span : xs.span * xs.span) * Math.log(2 + c.length);
+    if (score > bestS) { bestS = score; best = c; }
+  }
+  return best;
+}
+
+function reconstructZTwoSurface(frontPts, idx) {
   const n = frontPts.length;
   const zN = new Float32Array(n);
   let prev = null;
   for (let i = 0; i < n; i++) {
-    const yPix = frontPts[i][0] / S.imgH * (pack.h - 1);
-    const xs = interpolateXAtY(side, yPix);
-    if (!xs.length) {
-      const cands = zCandsAtY(S.triDepth && S.triDepth.side, frontPts[i][0] / S.imgH, 6);
-      if (cands.length) {
-        let z = cands[0], bd = 1e9;
-        for (let k = 0; k < cands.length; k++) {
-          const d = prev == null ? Math.abs(cands[k] - 0.5) : Math.abs(cands[k] - prev);
-          if (d < bd) { bd = d; z = cands[k]; }
-        }
-        zN[i] = z;
-        prev = z;
-      } else {
-        zN[i] = prev != null ? prev : 0.5;
+    const yN = frontPts[i][0] / S.imgH;
+    const cands = zCandsAtY(S.triDepth && S.triDepth.side, yN, 4);
+    let z;
+    if (cands.length) {
+      z = cands[0];
+      let bd = 1e9;
+      for (let k = 0; k < cands.length; k++) {
+        const d = prev == null ? Math.abs(cands[k] - 0.5) : Math.abs(cands[k] - prev);
+        if (d < bd) { bd = d; z = cands[k]; }
       }
     } else {
-      let z = xs[0] / Math.max(1, pack.w - 1);
-      if (prev != null && xs.length > 1) {
-        let bd = 1e9;
-        for (let k = 0; k < xs.length; k++) {
-          const zn = xs[k] / Math.max(1, pack.w - 1);
-          const d = Math.abs(zn - prev);
-          if (d < bd) { bd = d; z = zn; }
-        }
-      }
-      zN[i] = z;
-      prev = z;
+      z = lookupSideZN(frontPts, i, idx, prev);
+      if (z == null) z = prev != null ? prev : 0.5;
     }
+    if (prev != null) {
+      const dy = Math.abs(frontPts[i][0] - frontPts[Math.max(0, i - 1)][0]) / Math.max(1, S.imgH);
+      const maxStep = 0.04 + dy * 3;
+      if (Math.abs(z - prev) > maxStep) z = prev + Math.sign(z - prev) * maxStep;
+    }
+    zN[i] = z;
+    prev = z;
   }
-  return smooth1D(zN, 2);
+  return smooth1D(zN, 8);
 }
 
 function resamplePolyline(pts, n) {
@@ -1440,8 +1629,8 @@ function resamplePolyline(pts, n) {
   return out;
 }
 
-function reconstructZThreeView(frontPts) {
-  return reconstructZTwoSurface(frontPts);
+function reconstructZThreeView(frontPts, idx) {
+  return reconstructZTwoSurface(frontPts, idx);
 }
 
 function extractGoldenMask() {
@@ -4092,6 +4281,29 @@ function traceSkeletonPath(skeleton, degree, used, w, h, startY, startX) {
   return path;
 }
 
+function splitSharpCorners(pts) {
+  if (!pts || pts.length < 28) return [pts];
+  const win = 8;
+  const cosMin = 0.34;
+  const cuts = [0];
+  for (let i = win; i < pts.length - win; i++) {
+    const ax = pts[i][1] - pts[i - win][1], ay = pts[i][0] - pts[i - win][0];
+    const bx = pts[i + win][1] - pts[i][1], by = pts[i + win][0] - pts[i][0];
+    const am = Math.hypot(ax, ay), bm = Math.hypot(bx, by);
+    if (am < 8 || bm < 8) continue;
+    if ((ax * bx + ay * by) / (am * bm) >= cosMin) continue;
+    if (i - cuts[cuts.length - 1] >= 24) cuts.push(i);
+  }
+  cuts.push(pts.length);
+  if (cuts.length <= 2) return [pts];
+  const out = [];
+  for (let k = 1; k < cuts.length; k++) {
+    const p = pts.slice(cuts[k - 1], cuts[k] + 1);
+    if (p.length >= 20) out.push(p);
+  }
+  return out.length ? out : [pts];
+}
+
 function sanitizeLineArtCurves(curves) {
   const out = [];
   for (const c of curves) {
@@ -4121,6 +4333,9 @@ function polylinesToCurveRecords(rawCurves) {
 function refreshCurveOutputs() {
   smoothAllCurves();
   S.triMatch = null;
+  S.triTopMatch = null;
+  try { matchFrontToSideCurves(); } catch (e) { console.error('TriMatch side', e); }
+  try { matchFrontToTopCurves(); } catch (e) { console.error('TriMatch top', e); }
   try { S.curveLevels = classifyCurves(S.smoothedCurves, S.brightness, S.imgW, S.imgH); } catch(e) { console.error('Classify error:', e); }
   if (S.lineDrawing && S.curveLevels) S.curveLevels = S.curveLevels.map(() => 1);
   try { estimateCurveDepths(); } catch(e) { console.error('Depth error:', e); }
@@ -4192,7 +4407,14 @@ function pickStrokeAt(imgX, imgY) {
   );
   if (!path || path.length < 24) { toast('这一笔太短，换一个更靠近线中心的点', 'err'); return; }
   const raw = sanitizeLineArtCurves([path])[0] || path;
-  S.curves = polylinesToCurveRecords((S.curves || []).map(c => c.points).concat([raw]));
+  const existing = (S.curves || []).map(c => c.points);
+  for (let i = 0; i < existing.length; i++) {
+    if (meanNearestDist(raw, existing[i], 6) < 10) {
+      toast('这一笔已经有了，点另一条线', 'err');
+      return;
+    }
+  }
+  S.curves = polylinesToCurveRecords(existing.concat([raw]));
   S.curves = polylinesToCurveRecords(
     deduplicateCurves(S.curves.map(c => c.points), S.brightness, S.imgW, S.imgH, 10)
   );
@@ -4462,7 +4684,7 @@ function extractAll() {
     const modeTxt = (S.inputMode==='tri' ? '三视图' : '单图') + (S.lineDrawing ? ' · 线稿' : '') + (S.inputMode==='tri' && S.lineDrawing ? ' · 三向对齐' : '');
     setStatus(`完成: ${S.smoothedCurves.length} 根曲线 · ${modeTxt} · ${ms}ms`);
     if (S.inputMode === 'tri' && S.lineDrawing) {
-      toast(`线稿 ${S.smoothedCurves.length} 根。先看「曲线」页黄线是否贴墨水；缺的一笔可点选补上。俯视三张图不一致时对不齐`, 'ok', 5200);
+      toast(`线稿 ${S.smoothedCurves.length} 根。请先看「曲线」页。侧视黄线应贴侧面墨水；俯视手绘不一致时叠不上。缺笔再点选补`, 'ok', 5200);
     } else {
       toast(`提取完成：${S.smoothedCurves.length} 根曲线（${ms}ms）`, 'ok');
     }
@@ -4601,7 +4823,7 @@ function buildCurveWorldPoints(cd, idx) {
 
     if (tri && tri.side) {
       if (S.lineDrawing) {
-        if (!cd._epiZN || cd._epiZN.length !== n) cd._epiZN = reconstructZThreeView(curve);
+        if (!cd._epiZN || cd._epiZN.length !== n) cd._epiZN = reconstructZThreeView(curve, idx);
         z = (cd._epiZN[pi] - 0.5) * 2 * depthRange;
       } else {
         const zSideN = queryRowTable(tri.side, yN, xN);
@@ -4901,8 +5123,12 @@ function drawOrthoBlueprint(ctx, W, H) {
 
   ctx.fillStyle = '#888';
   ctx.font = '12px sans-serif';
-  const tag = preset === 'side' ? '侧视=侧面图' : (preset === 'top' ? '俯视=顶面图' : '正视=正面图');
-  ctx.fillText(tag + ' · 只画中心线对照线稿 · 拖转视角才见面片', 10, 20);
+  const tag = preset === 'side'
+    ? '侧视=侧面图 · 黄线应贴侧面墨水（一条配一条）'
+    : (preset === 'top'
+      ? '俯视=顶面图 · 正+侧已定XYZ，手绘顶图不一致时叠不上'
+      : '正视=正面图 · 黄线应贴正面墨水');
+  ctx.fillText(tag + ' · 只画中心线 · 拖转视角才见面片', 10, 20);
 }
 
 // ============================================================
