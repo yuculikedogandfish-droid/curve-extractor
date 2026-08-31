@@ -160,7 +160,7 @@
 
 <header>
   <h1>Curve Extractor</h1>
-  <span class="subtitle">v1.4.15 · 正/侧/俯全部曲线亮黄显示，不再把分枝藏成暗线</span>
+  <span class="subtitle">v1.4.16 · 线稿贴墨水平滑；侧面跟左右跨度大的轮廓，避免阶梯</span>
   <span class="status" id="status">就绪</span>
 </header>
 
@@ -1318,21 +1318,26 @@ function longestSkeletonPath(skeleton, w, h) {
         q.push(j);
       }
     }
-    return { last, prev };
+    return { last, prev, seen };
   };
-  let seed = -1;
-  for (let i = 0; i < w * h; i++) if (skeleton[i]) { seed = i; break; }
-  if (seed < 0) return [];
-  const a = farthest(seed);
-  const b = farthest(a.last);
-  const path = [];
-  const used = new Set();
-  for (let i = b.last; i >= 0 && !used.has(i); i = b.prev[i]) {
-    used.add(i);
-    const y = (i / w) | 0;
-    path.push([y, i - y * w]);
+  let bestPath = [];
+  const seenComp = new Uint8Array(w * h);
+  for (let seed = 0; seed < w * h; seed++) {
+    if (!skeleton[seed] || seenComp[seed]) continue;
+    const a = farthest(seed);
+    for (let i = 0; i < w * h; i++) if (a.seen[i]) seenComp[i] = 1;
+    const b = farthest(a.last);
+    const path = [];
+    const used = new Set();
+    for (let i = b.last; i >= 0 && !used.has(i); i = b.prev[i]) {
+      used.add(i);
+      const y = (i / w) | 0;
+      path.push([y, i - y * w]);
+    }
+    path.reverse();
+    if (path.length > bestPath.length) bestPath = path;
   }
-  return path.reverse();
+  return bestPath;
 }
 
 // 线稿三视图：侧面骨架最长路径 = 侧视轮廓，Z 沿这条线取，避免短竖线钉死深度
@@ -1359,6 +1364,7 @@ function dominantSideCurve() {
 }
 
 function pickSideCurveForFront(frontPts) {
+  if (S.lineDrawing) return dominantSideCurve();
   const pack = S.triSideCurves;
   if (!pack || !pack.curves || !pack.curves.length) return dominantSideCurve();
   const fy = curveYSpan(frontPts, S.imgH);
@@ -1385,7 +1391,18 @@ function reconstructZTwoSurface(frontPts) {
     const yPix = frontPts[i][0] / S.imgH * (pack.h - 1);
     const xs = interpolateXAtY(side, yPix);
     if (!xs.length) {
-      zN[i] = prev != null ? prev : 0.5;
+      const cands = zCandsAtY(S.triDepth && S.triDepth.side, frontPts[i][0] / S.imgH, 6);
+      if (cands.length) {
+        let z = cands[0], bd = 1e9;
+        for (let k = 0; k < cands.length; k++) {
+          const d = prev == null ? Math.abs(cands[k] - 0.5) : Math.abs(cands[k] - prev);
+          if (d < bd) { bd = d; z = cands[k]; }
+        }
+        zN[i] = z;
+        prev = z;
+      } else {
+        zN[i] = prev != null ? prev : 0.5;
+      }
     } else {
       let z = xs[0] / Math.max(1, pack.w - 1);
       if (prev != null && xs.length > 1) {
@@ -1405,7 +1422,7 @@ function reconstructZTwoSurface(frontPts) {
 
 function resamplePolyline(pts, n) {
   if (!pts || pts.length < 2) return pts ? pts.slice() : [];
-  if (pts.length <= n) return pts.slice();
+  n = Math.max(2, n | 0);
   const acc = [0];
   for (let i = 1; i < pts.length; i++) acc.push(acc[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
   const L = acc[acc.length - 1] || 1;
@@ -1503,7 +1520,7 @@ function autoAdaptParams() {
     pruneLength = Math.max(8, Math.round(10 * scaleFactor));
     minPathLength = Math.max(16, Math.round(20 * scaleFactor));
     const rdpEl = document.getElementById('rdpEpsilon');
-    if (rdpEl) rdpEl.value = 5;
+    if (rdpEl) rdpEl.value = 1.5;
   } else if (totalComponents <= 3) {
     // 少量大连通块：曲线比较完整，用小的形态学参数
     closeRadius = Math.max(1, Math.round(2 * scaleFactor));
@@ -4142,9 +4159,16 @@ function smoothAllCurves() {
   const p = getParams();
   S.smoothedCurves = [];
   for (const cd of S.curves) {
-    const control = rdpSimplify(cd.points, p.rdpEpsilon);
-    const smoothed = bsplineInterpolate(control, p.numSamples, 3);
-    S.smoothedCurves.push({ ...cd, control, smoothed });
+    if (S.lineDrawing) {
+      const control = rdpSimplify(cd.points, Math.min(p.rdpEpsilon, 2));
+      const n = Math.min(Math.max(p.numSamples, 200), 800);
+      const smoothed = resamplePolyline(control.length >= 2 ? control : cd.points, n);
+      S.smoothedCurves.push({ ...cd, control, smoothed });
+    } else {
+      const control = rdpSimplify(cd.points, p.rdpEpsilon);
+      const smoothed = bsplineInterpolate(control, p.numSamples, 3);
+      S.smoothedCurves.push({ ...cd, control, smoothed });
+    }
   }
   return S.smoothedCurves;
 }
@@ -4316,6 +4340,7 @@ function extractAll() {
     smoothAllCurves();
     S.triMatch = null;
     try { S.curveLevels = classifyCurves(S.smoothedCurves, S.brightness, S.imgW, S.imgH); } catch(e) { console.error('Classify error:', e); }
+    if (S.lineDrawing && S.curveLevels) S.curveLevels = S.curveLevels.map(() => 1);
     try { estimateCurveDepths(); } catch(e) { console.error('Depth error:', e); }
     S.curveEdits = {}; S.edit3d.selected=-1; S.edit3d.dragHandle=-1;
     try { S.cardMeshes = buildAllCardMeshes(); } catch(e) { console.error('Card mesh error:', e); }
@@ -4332,7 +4357,7 @@ function extractAll() {
     const modeTxt = (S.inputMode==='tri' ? '三视图' : '单图') + (S.lineDrawing ? ' · 线稿' : '') + (S.inputMode==='tri' && S.lineDrawing ? ' · 三向对齐' : '');
     setStatus(`完成: ${S.smoothedCurves.length} 根曲线 · ${modeTxt} · ${ms}ms`);
     if (S.inputMode === 'tri' && S.lineDrawing) {
-      toast(`线稿 ${S.smoothedCurves.length} 根。正/侧/俯只画中心线对照白线；拖转画面才见面片`, 'ok', 4500);
+      toast(`线稿 ${S.smoothedCurves.length} 根。正视黄线应贴在正面墨水中心；侧视贴侧面主轮廓。俯视三张图不一致时对不齐`, 'ok', 4800);
     } else {
       toast(`提取完成：${S.smoothedCurves.length} 根曲线（${ms}ms）`, 'ok');
     }
