@@ -160,7 +160,7 @@
 
 <header>
   <h1>Curve Extractor</h1>
-  <span class="subtitle">v1.4.13 · 线稿按走向穿过交点，交叉不是打圈</span>
+  <span class="subtitle">v1.4.14 · 正交对照只画中心线，面片在拖转视角时显示</span>
   <span class="status" id="status">就绪</span>
 </header>
 
@@ -4233,7 +4233,7 @@ function extractAll() {
             ? traceStrokesHuman(S.skeletonPruned, S.imgW, S.imgH, minLen)
             : extractCurvesSkeletonGraph(S.skeletonPruned, S.imgW, S.imgH, minLen);
           if (!S.lineDrawing) rawCurves = connectShortSegmentsV2(rawCurves, S.imgW, S.imgH);
-          if (S.lineDrawing) rawCurves = bundleOverdrawnStrokes(rawCurves, S.imgW, S.imgH, S.inputMode === 'tri' ? 0.045 : 0.028);
+          if (S.lineDrawing) rawCurves = bundleOverdrawnStrokes(rawCurves, S.imgW, S.imgH, S.inputMode === 'tri' ? 0.08 : 0.04);
           rawCurves = deduplicateCurves(rawCurves, S.brightness, S.imgW, S.imgH, S.lineDrawing ? 12 : 6);
           if (S.lineDrawing) rawCurves = filterLabelCurves(rawCurves, S.imgW, S.imgH);
           S.curves = rawCurves.map((curve, i) => {
@@ -4332,7 +4332,7 @@ function extractAll() {
     const modeTxt = (S.inputMode==='tri' ? '三视图' : '单图') + (S.lineDrawing ? ' · 线稿' : '') + (S.inputMode==='tri' && S.lineDrawing ? ' · 三向对齐' : '');
     setStatus(`完成: ${S.smoothedCurves.length} 根曲线 · ${modeTxt} · ${ms}ms`);
     if (S.inputMode === 'tri' && S.lineDrawing) {
-      toast(`线稿 ${S.smoothedCurves.length} 根（交点按走向穿过）。先看「曲线」页是否还打圈；再点正视/侧视`, 'ok', 4500);
+      toast(`线稿 ${S.smoothedCurves.length} 根。正/侧/俯只画中心线对照白线；拖转画面才见面片`, 'ok', 4500);
     } else {
       toast(`提取完成：${S.smoothedCurves.length} 根曲线（${ms}ms）`, 'ok');
     }
@@ -4450,14 +4450,7 @@ function getEditOffset(idx, pi, n) {
 
 // 由2D平滑曲线生成世界坐标3D点（与3D预览同一套深度逻辑，保证所见即所导）
 function buildCurveWorldPoints(cd, idx) {
-  let curve = cd.smoothed;
-  if (S.lineDrawing && cd.points && cd.points.length > 8) {
-    if (!cd._rawResamp || cd._rawResamp._srcLen !== cd.points.length) {
-      cd._rawResamp = resamplePolyline(cd.points, Math.min(480, Math.max(80, cd.points.length)));
-      cd._rawResamp._srcLen = cd.points.length;
-    }
-    curve = cd._rawResamp;
-  }
+  const curve = cd.smoothed;
   const n = curve.length;
   const depthProfile = S.curveDepthProfiles ? S.curveDepthProfiles[idx] : null;
   const rootIsStart = curve[0][0] > curve[n-1][0];
@@ -4757,7 +4750,8 @@ function drawOrthoBlueprint(ctx, W, H) {
   }
   ctx.globalAlpha = 1;
 
-  if (S.card.enabled) {
+  // 正交对照只画中心线。面片线框在正/侧/俯会铺成一窝线，拖转视角再画。
+  if (S.card.enabled && !S.view3d.preset) {
     if (!S.cardMeshes) buildAllCardMeshes();
     ctx.strokeStyle = 'rgba(255,215,0,0.35)';
     ctx.lineWidth = 0.8;
@@ -4778,7 +4772,7 @@ function drawOrthoBlueprint(ctx, W, H) {
   ctx.fillStyle = '#888';
   ctx.font = '12px sans-serif';
   const tag = preset === 'side' ? '侧视=侧面图' : (preset === 'top' ? '俯视=顶面图' : '正视=正面图');
-  ctx.fillText(tag + ' · 工程图叠加 · 黄线应落在白线上', 10, 20);
+  ctx.fillText(tag + ' · 只画中心线对照线稿 · 拖转视角才见面片', 10, 20);
 }
 
 // ============================================================
