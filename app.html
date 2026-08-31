@@ -160,7 +160,7 @@
 
 <header>
   <h1>Curve Extractor</h1>
-  <span class="subtitle">v1.4.12 · 线稿三视图：侧面曲线定 Z，叠笔收成中心线</span>
+  <span class="subtitle">v1.4.13 · 线稿按走向穿过交点，交叉不是打圈</span>
   <span class="status" id="status">就绪</span>
 </header>
 
@@ -198,7 +198,7 @@
         <input type="file" id="triFileInput" accept="image/*" style="display:none;">
         <div style="font-size:11px;color:#888;line-height:1.5;margin-top:2px;">
           单张拖到对应槽位；也可一次拖入3张（文件名含 front/side/top 或 正/侧/顶 会自动归位）。<br>
-          正面决定左右/上下，侧面决定前后。点「正视」「侧视」看黄线是否叠在对应线稿上。面片需勾选「3D中显示面片」。
+          正面决定左右/上下，侧面决定前后。线稿按走向穿过交叉点，交叉是两条线交过，不会拐成圈。
         </div>
       </div>
 
@@ -1013,8 +1013,7 @@ function extractLineCurvesFromRgb(rgb) {
   const savedB = S.brightness, savedInv = S.invertMask;
   S.brightness = brightness;
   S.invertMask = false;
-  let curves = extractCurvesSkeletonGraph(skel, w, h, Math.min(p.minLength, 12));
-  curves = connectShortSegmentsV2(curves, w, h);
+  let curves = traceStrokesHuman(skel, w, h, Math.max(24, Math.min(p.minLength, 40)));
   curves = bundleOverdrawnStrokes(curves, w, h, 0.055);
   curves = filterLabelCurves(curves, w, h);
   S.brightness = savedB;
@@ -1360,7 +1359,19 @@ function dominantSideCurve() {
 }
 
 function pickSideCurveForFront(frontPts) {
-  return dominantSideCurve();
+  const pack = S.triSideCurves;
+  if (!pack || !pack.curves || !pack.curves.length) return dominantSideCurve();
+  const fy = curveYSpan(frontPts, S.imgH);
+  let best = null, bestS = -1;
+  for (let i = 0; i < pack.curves.length; i++) {
+    const c = pack.curves[i];
+    const sy = curveYSpan(c, pack.h);
+    const xs = curveXSpan(c, pack.w);
+    const ov = Math.max(0, Math.min(fy.ymax, sy.ymax) - Math.max(fy.ymin, sy.ymin));
+    const score = (ov + 0.02) * (0.25 + xs.span) * Math.log(2 + c.length);
+    if (score > bestS) { bestS = score; best = c; }
+  }
+  return best || dominantSideCurve();
 }
 
 function reconstructZTwoSurface(frontPts) {
@@ -1486,11 +1497,11 @@ function autoAdaptParams() {
   let closeRadius, dilateRadius, minObjectSize, pruneLength, minPathLength;
 
   if (S.lineDrawing) {
-    closeRadius = Math.max(8, Math.round(8 * scaleFactor));
+    closeRadius = Math.max(3, Math.round(3 * scaleFactor));
     dilateRadius = 0;
     minObjectSize = Math.max(20, Math.round(30 * scaleFactor));
-    pruneLength = Math.max(2, Math.round(3 * scaleFactor));
-    minPathLength = Math.max(18, Math.round(24 * scaleFactor));
+    pruneLength = Math.max(8, Math.round(10 * scaleFactor));
+    minPathLength = Math.max(16, Math.round(20 * scaleFactor));
     const rdpEl = document.getElementById('rdpEpsilon');
     if (rdpEl) rdpEl.value = 5;
   } else if (totalComponents <= 3) {
@@ -2306,6 +2317,272 @@ function buildLongCurvesV2(edges, edgePairs, endpoints, minLength, maxCurves, w,
 
   return curves;
 }
+
+function contractShortJunctionEdges(edges, endpointSet, maxLen) {
+  let list = edges.slice();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i];
+      if (!e || e.path.length > maxLen) continue;
+      if (endpointSet.has(e.nodeA) || endpointSet.has(e.nodeB)) continue;
+      if (e.nodeA === e.nodeB) continue;
+      const from = e.nodeB, to = e.nodeA;
+      list.splice(i, 1);
+      for (let j = 0; j < list.length; j++) {
+        if (list[j].nodeA === from) list[j].nodeA = to;
+        if (list[j].nodeB === from) list[j].nodeB = to;
+      }
+      changed = true;
+      break;
+    }
+  }
+  return list.filter(e => e.nodeA !== e.nodeB && e.path.length > 2);
+}
+
+function clusterPoints(pts, radius) {
+  const n = pts.length;
+  if (n <= 1) return pts.slice();
+  const parent = new Int32Array(n);
+  for (let i = 0; i < n; i++) parent[i] = i;
+  const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+  const r2 = radius * radius;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const dy = pts[i][0] - pts[j][0], dx = pts[i][1] - pts[j][1];
+      if (dy * dy + dx * dx <= r2) {
+        const a = find(i), b = find(j);
+        if (a !== b) parent[b] = a;
+      }
+    }
+  }
+  const groups = new Map();
+  for (let i = 0; i < n; i++) {
+    const r = find(i);
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r).push(pts[i]);
+  }
+  const out = [];
+  for (const g of groups.values()) {
+    let sy = 0, sx = 0;
+    for (const p of g) { sy += p[0]; sx += p[1]; }
+    sy /= g.length; sx /= g.length;
+    let best = g[0], bd = 1e9;
+    for (const p of g) {
+      const d = (p[0] - sy) * (p[0] - sy) + (p[1] - sx) * (p[1] - sx);
+      if (d < bd) { bd = d; best = p; }
+    }
+    out.push(best);
+  }
+  return out;
+}
+
+function edgeOutgoingDir(edge, nodeIdx) {
+  const path = edge.path;
+  let dirY = 0, dirX = 0;
+  const nPoints = Math.min(12, path.length - 1);
+  if (edge.nodeA === nodeIdx) {
+    for (let k = 1; k <= nPoints; k++) {
+      dirY += path[k][0] - path[0][0];
+      dirX += path[k][1] - path[0][1];
+    }
+  } else {
+    const last = path.length - 1;
+    for (let k = 1; k <= nPoints; k++) {
+      dirY += path[last - k][0] - path[last][0];
+      dirX += path[last - k][1] - path[last][1];
+    }
+  }
+  const mag = Math.hypot(dirY, dirX) || 1;
+  return { dirY: dirY / mag, dirX: dirX / mag };
+}
+
+function pairEdgesThrough(edges, w) {
+  const edgePairs = new Map();
+  const nodeEdges = new Map();
+  for (let ei = 0; ei < edges.length; ei++) {
+    const e = edges[ei];
+    if (!nodeEdges.has(e.nodeA)) nodeEdges.set(e.nodeA, []);
+    if (!nodeEdges.has(e.nodeB)) nodeEdges.set(e.nodeB, []);
+    nodeEdges.get(e.nodeA).push(ei);
+    nodeEdges.get(e.nodeB).push(ei);
+  }
+  function wouldShortCycle(ei, ej, cap) {
+    const seen = new Set([ei]);
+    let cur = ei, len = edges[ei].path.length;
+    while (len < cap) {
+      const nxt = edgePairs.get(cur);
+      if (nxt === undefined || seen.has(nxt)) break;
+      seen.add(nxt);
+      len += edges[nxt].path.length;
+      if (nxt === ej) return true;
+      cur = nxt;
+    }
+    return false;
+  }
+  for (const [node, list] of nodeEdges) {
+    if (list.length < 2) continue;
+    const edgeDirs = list.map(ei => ({ ei, ...edgeOutgoingDir(edges[ei], node) }));
+    const candidates = [];
+    for (let i = 0; i < edgeDirs.length; i++) {
+      for (let j = i + 1; j < edgeDirs.length; j++) {
+        const dot = edgeDirs[i].dirY * edgeDirs[j].dirY + edgeDirs[i].dirX * edgeDirs[j].dirX;
+        candidates.push({ i, j, dot, ei: edgeDirs[i].ei, ej: edgeDirs[j].ei });
+      }
+    }
+    candidates.sort((a, b) => a.dot - b.dot);
+    const used = new Set();
+    for (const cand of candidates) {
+      if (used.has(cand.i) || used.has(cand.j)) continue;
+      if (cand.dot > -0.22) break;
+      if (wouldShortCycle(cand.ei, cand.ej, 64)) continue;
+      used.add(cand.i);
+      used.add(cand.j);
+      edgePairs.set(cand.ei, cand.ej);
+      edgePairs.set(cand.ej, cand.ei);
+    }
+  }
+  return edgePairs;
+}
+
+function walkPairedStrokes(edges, edgePairs, endpoints, minLength, w) {
+  const usedEdges = new Set();
+  const curves = [];
+  const nodeEdges = new Map();
+  for (let ei = 0; ei < edges.length; ei++) {
+    const e = edges[ei];
+    if (!nodeEdges.has(e.nodeA)) nodeEdges.set(e.nodeA, []);
+    if (!nodeEdges.has(e.nodeB)) nodeEdges.set(e.nodeB, []);
+    nodeEdges.get(e.nodeA).push(ei);
+    nodeEdges.get(e.nodeB).push(ei);
+  }
+  function appendEdge(fullPath, edge, fromNode) {
+    if (edge.nodeA === fromNode) {
+      if (!fullPath.length) { for (const p of edge.path) fullPath.push(p); }
+      else { for (let k = 1; k < edge.path.length; k++) fullPath.push(edge.path[k]); }
+      return edge.nodeB;
+    }
+    if (!fullPath.length) { for (let k = edge.path.length - 1; k >= 0; k--) fullPath.push(edge.path[k]); }
+    else { for (let k = edge.path.length - 2; k >= 0; k--) fullPath.push(edge.path[k]); }
+    return edge.nodeA;
+  }
+  function walkFrom(startEdge, startNode) {
+    const fullPath = [];
+    let curEdge = startEdge, curNode = startNode;
+    while (curEdge !== -1 && !usedEdges.has(curEdge)) {
+      usedEdges.add(curEdge);
+      curNode = appendEdge(fullPath, edges[curEdge], curNode);
+      const nxt = edgePairs.get(curEdge);
+      curEdge = (nxt !== undefined && !usedEdges.has(nxt)) ? nxt : -1;
+    }
+    return fullPath;
+  }
+  for (const [ey, ex] of endpoints) {
+    const epIdx = ey * w + ex;
+    let startEdge = -1;
+    for (const ei of (nodeEdges.get(epIdx) || [])) {
+      if (!usedEdges.has(ei)) { startEdge = ei; break; }
+    }
+    if (startEdge < 0) continue;
+    const path = walkFrom(startEdge, epIdx);
+    if (path.length >= minLength) curves.push(path);
+  }
+  for (let ei = 0; ei < edges.length; ei++) {
+    if (usedEdges.has(ei)) continue;
+    if (edges[ei].path.length < minLength) { usedEdges.add(ei); continue; }
+    const path = walkFrom(ei, edges[ei].nodeA);
+    if (path.length < minLength) continue;
+    const a = path[0], b = path[path.length - 1];
+    const closed = Math.hypot(a[0] - b[0], a[1] - b[1]) < 10;
+    if (closed) {
+      let ymin = 1e9, ymax = 0, xmin = 1e9, xmax = 0;
+      for (const p of path) {
+        if (p[0] < ymin) ymin = p[0]; if (p[0] > ymax) ymax = p[0];
+        if (p[1] < xmin) xmin = p[1]; if (p[1] > xmax) xmax = p[1];
+      }
+      if ((xmax - xmin) < 48 && (ymax - ymin) < 48) continue;
+    }
+    curves.push(path);
+  }
+  return curves;
+}
+
+function segIntersect(p1, p2, p3, p4) {
+  const y1 = p1[0], x1 = p1[1], y2 = p2[0], x2 = p2[1];
+  const y3 = p3[0], x3 = p3[1], y4 = p4[0], x4 = p4[1];
+  const d = (x2 - x1) * (y4 - y3) - (y2 - y1) * (x4 - x3);
+  if (Math.abs(d) < 1e-8) return null;
+  const t = ((x3 - x1) * (y4 - y3) - (y3 - y1) * (x4 - x3)) / d;
+  const u = ((x3 - x1) * (y2 - y1) - (y3 - y1) * (x2 - x1)) / d;
+  if (t <= 0.02 || t >= 0.98 || u <= 0.02 || u >= 0.98) return null;
+  return [y1 + t * (y2 - y1), x1 + t * (x2 - x1), t, u];
+}
+
+function splitCrossingPolyline(pts) {
+  if (!pts || pts.length < 12) return [pts];
+  const n = pts.length;
+  const step = Math.max(1, Math.floor(n / 500));
+  for (let i = 0; i < n - 3; i += step) {
+    for (let j = i + 8; j < n - 1; j += step) {
+      const hit = segIntersect(pts[i], pts[i + 1], pts[j], pts[j + 1]);
+      if (!hit) continue;
+      const a = pts.slice(0, i + 1).concat(pts.slice(j + 1));
+      const b = pts.slice(i, j + 1);
+      const out = [];
+      if (a.length >= 8) out.push(a);
+      if (b.length >= 8) out.push(b);
+      return out.length ? out : [pts];
+    }
+  }
+  return [pts];
+}
+
+function openFalseLoop(pts) {
+  if (!pts || pts.length < 16) return pts;
+  const a = pts[0], b = pts[pts.length - 1];
+  if (Math.hypot(a[0] - b[0], a[1] - b[1]) > 14) return pts;
+  let ymin = 1e9, ymax = 0, xmin = 1e9, xmax = 0;
+  for (const p of pts) {
+    if (p[0] < ymin) ymin = p[0]; if (p[0] > ymax) ymax = p[0];
+    if (p[1] < xmin) xmin = p[1]; if (p[1] > xmax) xmax = p[1];
+  }
+  const box = Math.max(1, xmax - xmin) + Math.max(1, ymax - ymin);
+  if (pts.length > box * 2.2) {
+    const cut = (pts.length / 2) | 0;
+    return pts.slice(0, cut);
+  }
+  return pts;
+}
+
+function traceStrokesHuman(skeleton, w, h, minLength) {
+  minLength = minLength || 16;
+  let { endpoints, junctions } = findEndpointsAndJunctions(skeleton, w, h);
+  endpoints = clusterPoints(endpoints, 3);
+  junctions = clusterPoints(junctions, 6);
+  const jset = new Set(junctions.map(p => p[0] * w + p[1]));
+  endpoints = endpoints.filter(p => !jset.has(p[0] * w + p[1]));
+  const edges0 = extractAllEdgesV2(skeleton, w, h, endpoints, junctions);
+  const epSet = new Set(endpoints.map(p => p[0] * w + p[1]));
+  const edges = contractShortJunctionEdges(edges0, epSet, 14);
+  const pairs = pairEdgesThrough(edges, w);
+  let curves = walkPairedStrokes(edges, pairs, endpoints, minLength, w);
+  for (let pass = 0; pass < 4; pass++) {
+    const next = [];
+    let changed = false;
+    for (const c of curves) {
+      const parts = splitCrossingPolyline(c);
+      if (parts.length > 1) changed = true;
+      for (const p of parts) next.push(openFalseLoop(p));
+    }
+    curves = next;
+    if (!changed) break;
+  }
+  const kept = curves.filter(c => c && c.length >= minLength);
+  console.log(`[StrokeHuman] 端点 ${endpoints.length} 交点 ${junctions.length} 边 ${edges.length} 配对 ${pairs.size / 2} → ${kept.length} 条`);
+  return kept;
+}
+
 function extractAllEdges(skeleton, w, h, endpoints, junctions) {
   const edges = [];
   const nodeSet = new Set();
@@ -3948,13 +4225,15 @@ function extractAll() {
       const useSkeletonGraph = !!S.lineDrawing;
       if (useSkeletonGraph) {
         setStatus('5/6 骨架图论追踪...');
-        S._lastTraceMode = '骨架图论追踪';
+        S._lastTraceMode = S.lineDrawing ? '交点穿过追踪' : '骨架图论追踪';
         try {
           const p = getParams();
-          const minLen = S.lineDrawing ? Math.min(p.minLength, 12) : p.minLength;
-          let rawCurves = extractCurvesSkeletonGraph(S.skeletonPruned, S.imgW, S.imgH, minLen);
-          rawCurves = connectShortSegmentsV2(rawCurves, S.imgW, S.imgH);
-          if (S.lineDrawing) rawCurves = bundleOverdrawnStrokes(rawCurves, S.imgW, S.imgH, S.inputMode === 'tri' ? 0.055 : 0.028);
+          const minLen = S.lineDrawing ? 24 : p.minLength;
+          let rawCurves = S.lineDrawing
+            ? traceStrokesHuman(S.skeletonPruned, S.imgW, S.imgH, minLen)
+            : extractCurvesSkeletonGraph(S.skeletonPruned, S.imgW, S.imgH, minLen);
+          if (!S.lineDrawing) rawCurves = connectShortSegmentsV2(rawCurves, S.imgW, S.imgH);
+          if (S.lineDrawing) rawCurves = bundleOverdrawnStrokes(rawCurves, S.imgW, S.imgH, S.inputMode === 'tri' ? 0.045 : 0.028);
           rawCurves = deduplicateCurves(rawCurves, S.brightness, S.imgW, S.imgH, S.lineDrawing ? 12 : 6);
           if (S.lineDrawing) rawCurves = filterLabelCurves(rawCurves, S.imgW, S.imgH);
           S.curves = rawCurves.map((curve, i) => {
@@ -4053,7 +4332,7 @@ function extractAll() {
     const modeTxt = (S.inputMode==='tri' ? '三视图' : '单图') + (S.lineDrawing ? ' · 线稿' : '') + (S.inputMode==='tri' && S.lineDrawing ? ' · 三向对齐' : '');
     setStatus(`完成: ${S.smoothedCurves.length} 根曲线 · ${modeTxt} · ${ms}ms`);
     if (S.inputMode === 'tri' && S.lineDrawing) {
-      toast(`线稿 ${S.smoothedCurves.length} 根。先点正视、再点侧视：黄线应叠在对应白线上。面片请勾选「3D中显示面片」`, 'ok', 4200);
+      toast(`线稿 ${S.smoothedCurves.length} 根（交点按走向穿过）。先看「曲线」页是否还打圈；再点正视/侧视`, 'ok', 4500);
     } else {
       toast(`提取完成：${S.smoothedCurves.length} 根曲线（${ms}ms）`, 'ok');
     }
