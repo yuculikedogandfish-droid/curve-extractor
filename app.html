@@ -160,7 +160,7 @@
 
 <header>
   <h1>Curve Extractor</h1>
-  <span class="subtitle">v1.4.16 · 线稿贴墨水平滑；侧面跟左右跨度大的轮廓，避免阶梯</span>
+  <span class="subtitle">v1.4.17 · 线稿按走向惯性过交叉口；可在曲线页点选补一笔</span>
   <span class="status" id="status">就绪</span>
 </header>
 
@@ -205,6 +205,7 @@
       <div class="btn-row" style="margin-top:10px;">
         <button class="btn btn-secondary" id="btnDemo">加载示例</button>
         <button class="btn" id="btnExtract">提取曲线</button>
+        <button class="btn btn-secondary" id="btnPickStroke" style="margin-top:8px;width:100%;">点选补一笔（到「曲线」页点线稿）</button>
         <button class="btn btn-secondary" id="btnFineMode" style="margin-top:8px;width:100%;">精细模式（推荐光效图）</button>
       </div>
     </div>
@@ -289,7 +290,7 @@
           <button id="modeSmart" class="btn btn-sm" style="flex:1;background:#333;">智能追踪</button>
           <button id="modeAngle" class="btn btn-sm" style="flex:1;background:#333;">角度聚类</button>
         </div>
-        <div style="font-size:11px;color:#888;margin-top:4px;">方向场：可跨间隙（当前默认）<br>智能：端点+交叉点追踪<br>角度：固定5根主枝条</div>
+        <div style="font-size:11px;color:#888;margin-top:4px;">线稿：沿笔划走向走，交叉口按惯性穿过，不拐成圈。<br>金色光带仍可用方向场跨间隙。</div>
       </div>
       <div class="form-group">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
@@ -469,6 +470,7 @@ const S = {
   showLevels: [true, true, true], // 是否显示一/二/三级曲线
   invertMask: false, // 浅色背景时自动反转掩码
   lineDrawing: false, // 白线黑底线稿（自动检测）
+  pickStroke: false, // 曲线页点选补一笔
   // 背景去除
   bgEnabled: true,       // 是否启用自动背景去除
   bgMask: null,          // 背景mask（1=背景，需剔除）
@@ -895,7 +897,7 @@ function processTriViews() {
       const pack = extractLineCurvesFromRgb(S.triRgb.side);
       S.triSideCurves = pack;
       S.triDepth.side = buildRowTable(pack.skel, pack.w, pack.h);
-      console.log(`[TriView] 侧面骨架曲线 ${pack.curves.length} 条`);
+      console.log(`[TriView] 侧面走向曲线 ${pack.curves.length} 条`);
     } catch (e) {
       console.error('Side curve extract error:', e);
       S.triSideCurves = null;
@@ -1007,17 +1009,18 @@ function extractLineCurvesFromRgb(rgb) {
     mask[i] = val >= thr ? 1 : 0;
   }
   let solid = mask;
-  if (p.closeRadius > 0) solid = binaryClose(solid, w, h, createDisk(p.closeRadius));
+  if (p.closeRadius > 0) solid = binaryClose(solid, w, h, createDisk(Math.min(2, p.closeRadius)));
   solid = removeSmallObjects(solid, w, h, p.minObjectSize);
   const skel = pruneSkeleton(zhangSuen(solid, w, h), w, h, p.pruneLength);
-  const savedB = S.brightness, savedInv = S.invertMask;
+  const savedB = S.brightness, savedInv = S.invertMask, savedLD = S.lineDrawing;
   S.brightness = brightness;
   S.invertMask = false;
-  let curves = traceStrokesHuman(skel, w, h, Math.max(24, Math.min(p.minLength, 40)));
-  curves = bundleOverdrawnStrokes(curves, w, h, 0.055);
+  S.lineDrawing = true;
+  let curves = extractCurvesOrientationField(rgb, w, h, brightness, mask, 0.05, 16, 40);
   curves = filterLabelCurves(curves, w, h);
   S.brightness = savedB;
   S.invertMask = savedInv;
+  S.lineDrawing = savedLD;
   return { curves, w, h, skel };
 }
 
@@ -1340,31 +1343,30 @@ function longestSkeletonPath(skeleton, w, h) {
   return bestPath;
 }
 
-// 线稿三视图：侧面骨架最长路径 = 侧视轮廓，Z 沿这条线取，避免短竖线钉死深度
+// 线稿三视图：侧视取平滑走向曲线作 Z，不用骨架最长路径（骨架会走出台阶/方框）
 function dominantSideCurve() {
   const pack = S.triSideCurves;
   if (!pack) return null;
   if (S._sideZCurve) return S._sideZCurve;
-  let raw = (pack.skel && pack.w) ? longestSkeletonPath(pack.skel, pack.w, pack.h) : null;
-  if (!raw || raw.length < 24) {
-    let best = null, bestS = -1;
-    for (let i = 0; i < (pack.curves || []).length; i++) {
-      const c = pack.curves[i];
-      const xs = curveXSpan(c, pack.w);
-      const ys = curveYSpan(c, pack.h);
-      const score = xs.span * xs.span * (0.3 + ys.span) * Math.log(2 + c.length);
-      if (score > bestS) { bestS = score; best = c; }
-    }
-    raw = best;
+  let best = null, bestS = -1;
+  for (let i = 0; i < (pack.curves || []).length; i++) {
+    const c = pack.curves[i];
+    const xs = curveXSpan(c, pack.w);
+    const ys = curveYSpan(c, pack.h);
+    const score = c.length * (0.35 + xs.span) * (0.35 + ys.span);
+    if (score > bestS) { bestS = score; best = c; }
   }
-  if (!raw || raw.length < 4) return null;
-  const ctrl = rdpSimplify(raw, 2.5);
-  S._sideZCurve = (ctrl && ctrl.length >= 4) ? bsplineInterpolate(ctrl, Math.min(400, Math.max(100, raw.length)), 3) : raw;
+  if (!best || best.length < 24) {
+    const skelPath = (pack.skel && pack.w) ? longestSkeletonPath(pack.skel, pack.w, pack.h) : null;
+    if (skelPath && skelPath.length > (best ? best.length : 0)) best = skelPath;
+  }
+  if (!best || best.length < 4) return null;
+  const ctrl = rdpSimplify(best, 1.6);
+  S._sideZCurve = resamplePolyline(ctrl.length >= 2 ? ctrl : best, Math.min(400, Math.max(120, best.length)));
   return S._sideZCurve;
 }
 
 function pickSideCurveForFront(frontPts) {
-  if (S.lineDrawing) return dominantSideCurve();
   const pack = S.triSideCurves;
   if (!pack || !pack.curves || !pack.curves.length) return dominantSideCurve();
   const fy = curveYSpan(frontPts, S.imgH);
@@ -1514,7 +1516,7 @@ function autoAdaptParams() {
   let closeRadius, dilateRadius, minObjectSize, pruneLength, minPathLength;
 
   if (S.lineDrawing) {
-    closeRadius = Math.max(3, Math.round(3 * scaleFactor));
+    closeRadius = Math.max(1, Math.round(1 * scaleFactor));
     dilateRadius = 0;
     minObjectSize = Math.max(20, Math.round(30 * scaleFactor));
     pruneLength = Math.max(8, Math.round(10 * scaleFactor));
@@ -3365,17 +3367,17 @@ function computeOrientationField(imageData, w, h, brightness, mask) {
 function traceOrientationField(brightness, mask, dirX, dirY, coherence, w, h, seedX, seedY, minBrightness, visited) {
   const stepSize = 2.0;
   const maxSteps = 6000;
-  const maxGap = 12; // 允许跨越的最大间隙（像素）
+  const maxGap = S.lineDrawing ? 16 : 12;
   const halfPaths = [[], []];
 
   for (let d = 0; d < 2; d++) {
     const direction = d === 0 ? 1 : -1;
     let cx = seedX, cy = seedY;
-    let smoothDx = 0, smoothDy = 0; // EMA平滑方向
-    const emaAlpha = 0.3; // 方向惯性系数（越小越惯性强）
+    let smoothDx = 0, smoothDy = 0;
+    const emaAlpha = S.lineDrawing ? 0.1 : 0.3;
     const localVisited = new Set();
     let visitedHits = 0;
-    let gapCount = 0; // 当前连续间隙步数
+    let gapCount = 0;
     let inMask = true;
 
     for (let step = 0; step < maxSteps; step++) {
@@ -3383,11 +3385,9 @@ function traceOrientationField(brightness, mask, dirX, dirY, coherence, w, h, se
       if (ix < 1 || ix >= w-1 || iy < 1 || iy >= h-1) break;
       const idx = iy * w + ix;
 
-      // 间隙处理：不在mask内时沿惯性方向滑行
       if (!mask[idx]) {
         gapCount++;
         if (gapCount > maxGap || (!inMask && gapCount > 3)) break;
-        // 沿当前平滑方向继续
         if (smoothDx !== 0 || smoothDy !== 0) {
           cx += smoothDx * direction * stepSize;
           cy += smoothDy * direction * stepSize;
@@ -3397,7 +3397,6 @@ function traceOrientationField(brightness, mask, dirX, dirY, coherence, w, h, se
       gapCount = 0;
       inMask = true;
 
-      // 亮度检查（放宽，反色图已在外层处理）
       let bval = brightness[idx];
       if (S.invertMask) bval = 1 - bval;
       if (bval < 0.08) {
@@ -3410,10 +3409,9 @@ function traceOrientationField(brightness, mask, dirX, dirY, coherence, w, h, se
         continue;
       }
 
-      // 检查全局visited：允许穿过已访问区域
       if (step > 5 && visited[idx]) {
         visitedHits++;
-        if (visitedHits > 40) break;
+        if (visitedHits > (S.lineDrawing ? 120 : 40)) break;
       } else {
         visitedHits = Math.max(0, visitedHits - 1);
       }
@@ -3422,7 +3420,6 @@ function traceOrientationField(brightness, mask, dirX, dirY, coherence, w, h, se
 
       halfPaths[d].push([iy, ix]);
 
-      // 双线性插值获取方向
       const x0 = Math.floor(cx), y0 = Math.floor(cy);
       const fx = cx - x0, fy = cy - y0;
       const i00 = y0 * w + x0, i01 = y0 * w + (x0+1), i10 = (y0+1) * w + x0, i11 = (y0+1) * w + (x0+1);
@@ -3431,7 +3428,6 @@ function traceOrientationField(brightness, mask, dirX, dirY, coherence, w, h, se
 
       const mag = Math.sqrt(dx*dx + dy*dy);
       if (mag < 0.01) {
-        // 方向不明，沿惯性继续
         if (smoothDx !== 0 || smoothDy !== 0) {
           cx += smoothDx * direction * stepSize;
           cy += smoothDy * direction * stepSize;
@@ -3441,20 +3437,51 @@ function traceOrientationField(brightness, mask, dirX, dirY, coherence, w, h, se
       }
       dx /= mag; dy /= mag;
 
-      // 确保方向与前一步一致（防止翻转）
       if (smoothDx !== 0 || smoothDy !== 0) {
         if (dx * smoothDx + dy * smoothDy < 0) {
           dx = -dx; dy = -dy;
         }
       }
 
-      // EMA方向平滑（强惯性）
       if (smoothDx === 0 && smoothDy === 0) {
         smoothDx = dx; smoothDy = dy;
+      } else if (S.lineDrawing) {
+        const coh = coherence[idx] || 0;
+        const headings = [[smoothDx, smoothDy]];
+        if (coh > 0.35 && (dx * smoothDx + dy * smoothDy) > 0.25) headings.push([dx, dy]);
+        const angs = [0.18, -0.18, 0.4, -0.4];
+        for (let ai = 0; ai < angs.length; ai++) {
+          const ca = Math.cos(angs[ai]), sa = Math.sin(angs[ai]);
+          headings.push([smoothDx * ca - smoothDy * sa, smoothDx * sa + smoothDy * ca]);
+        }
+        let bestDx = smoothDx, bestDy = smoothDy, bestSc = -1e9;
+        for (let hi = 0; hi < headings.length; hi++) {
+          let hx = headings[hi][0], hy = headings[hi][1];
+          const hm = Math.hypot(hx, hy) || 1;
+          hx /= hm; hy /= hm;
+          let sc = 0.3 * (hx * smoothDx + hy * smoothDy);
+          for (let ahead = 2; ahead <= 10; ahead += 2) {
+            const ax = Math.round(cx + hx * ahead * direction);
+            const ay = Math.round(cy + hy * ahead * direction);
+            if (ax < 1 || ax >= w - 1 || ay < 1 || ay >= h - 1) { sc -= 0.4; continue; }
+            const ai = ay * w + ax;
+            if (mask[ai]) {
+              let bv = brightness[ai];
+              if (S.invertMask) bv = 1 - bv;
+              sc += bv * (1.15 - ahead * 0.04);
+            } else sc -= 0.5;
+          }
+          if (sc > bestSc) { bestSc = sc; bestDx = hx; bestDy = hy; }
+        }
+        const stick = coh < 0.42 ? 0.9 : 0.7;
+        let ndx = bestDx * (1 - stick) + smoothDx * stick;
+        let ndy = bestDy * (1 - stick) + smoothDy * stick;
+        const nmag = Math.hypot(ndx, ndy) || 1;
+        smoothDx = ndx / nmag;
+        smoothDy = ndy / nmag;
       } else {
-        // coherence低时增强惯性
         const coh = coherence[idx] || 0.5;
-        const alpha = emaAlpha + coh * 0.4; // coherence高时更快响应方向变化
+        const alpha = emaAlpha + coh * 0.4;
         smoothDx = smoothDx * (1 - alpha) + dx * alpha;
         smoothDy = smoothDy * (1 - alpha) + dy * alpha;
         const smag = Math.sqrt(smoothDx*smoothDx + smoothDy*smoothDy) || 1;
@@ -3466,12 +3493,10 @@ function traceOrientationField(brightness, mask, dirX, dirY, coherence, w, h, se
     }
   }
 
-  // 合并路径
   const path = [];
   for (let i = halfPaths[1].length - 1; i >= 0; i--) path.push(halfPaths[1][i]);
   for (let i = 0; i < halfPaths[0].length; i++) path.push(halfPaths[0][i]);
 
-  // 稀疏标记visited
   for (let i = 0; i < path.length; i += 3) {
     visited[path[i][0] * w + path[i][1]] = 1;
   }
@@ -4067,24 +4092,136 @@ function traceSkeletonPath(skeleton, degree, used, w, h, startY, startX) {
   return path;
 }
 
+function sanitizeLineArtCurves(curves) {
+  const out = [];
+  for (const c of curves) {
+    const parts = splitCrossingPolyline(openFalseLoop(c));
+    for (const p of parts) {
+      if (p && p.length >= 24) out.push(p);
+    }
+  }
+  return out;
+}
+
+function polylinesToCurveRecords(rawCurves) {
+  return rawCurves.map((curve, i) => {
+    const start = curve[0], end = curve[curve.length - 1];
+    const angle = Math.atan2(end[0] - start[0], end[1] - start[1]) * 180 / Math.PI;
+    return {
+      key: `curve_${String(i + 1).padStart(2, '0')}`,
+      name: `Curve ${i + 1}`,
+      points: curve,
+      length: curve.length,
+      endpoint: end,
+      angle: angle,
+    };
+  });
+}
+
+function refreshCurveOutputs() {
+  smoothAllCurves();
+  S.triMatch = null;
+  try { S.curveLevels = classifyCurves(S.smoothedCurves, S.brightness, S.imgW, S.imgH); } catch(e) { console.error('Classify error:', e); }
+  if (S.lineDrawing && S.curveLevels) S.curveLevels = S.curveLevels.map(() => 1);
+  try { estimateCurveDepths(); } catch(e) { console.error('Depth error:', e); }
+  S.curveEdits = {}; S.edit3d.selected = -1; S.edit3d.dragHandle = -1;
+  try { S.cardMeshes = buildAllCardMeshes(); } catch(e) { console.error('Card mesh error:', e); }
+  drawCurves('canvasCurves', S.smoothedCurves, true, true);
+  try { draw3DView(); } catch(e) { console.error('3D view error:', e); }
+  drawEditor();
+  updateCurveList();
+}
+
+function switchMainView(name) {
+  document.querySelectorAll('.view-tab').forEach(t => t.classList.toggle('active', t.dataset.view === name));
+  document.querySelectorAll('.view-pane').forEach(p => p.classList.remove('active'));
+  const pane = document.getElementById('pane-' + name);
+  if (pane) pane.classList.add('active');
+  if (name === '3d') setTimeout(() => draw3DView(), 50);
+}
+
+function nearestInkPixel(x, y, rad) {
+  if (!S.mask) return null;
+  const w = S.imgW, h = S.imgH;
+  let best = null, bd = rad * rad + 1;
+  const x0 = Math.round(x), y0 = Math.round(y);
+  for (let dy = -rad; dy <= rad; dy++) {
+    for (let dx = -rad; dx <= rad; dx++) {
+      const xx = x0 + dx, yy = y0 + dy;
+      if (xx < 1 || yy < 1 || xx >= w - 1 || yy >= h - 1) continue;
+      if (!S.mask[yy * w + xx]) continue;
+      const d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = { x: xx, y: yy }; }
+    }
+  }
+  return best;
+}
+
+function setPickStroke(on) {
+  S.pickStroke = !!on;
+  const btn = document.getElementById('btnPickStroke');
+  const cv = document.getElementById('canvasCurves');
+  if (btn) {
+    btn.style.background = S.pickStroke ? '#FFD700' : '';
+    btn.style.color = S.pickStroke ? '#000' : '';
+    btn.textContent = S.pickStroke ? '点选中…再点「曲线」页上的线稿' : '点选补一笔（到「曲线」页点线稿）';
+  }
+  if (cv) cv.style.cursor = S.pickStroke ? 'crosshair' : '';
+}
+
+function pickStrokeAt(imgX, imgY) {
+  if (!S.mask || !S.brightness || !S.rgb) { toast('请先提取曲线', 'err'); return; }
+  const ink = nearestInkPixel(imgX, imgY, 28);
+  if (!ink) { toast('请点在线稿墨水上', 'err'); return; }
+  let cache = S._ofCache;
+  if (!cache || cache.w !== S.imgW || cache.h !== S.imgH) {
+    cache = computeOrientationField(S.rgb, S.imgW, S.imgH, S.brightness, S.mask);
+    S._ofCache = { ...cache, w: S.imgW, h: S.imgH };
+  }
+  const visited = new Uint8Array(S.imgW * S.imgH);
+  for (const cd of (S.curves || [])) {
+    const pts = cd.points || [];
+    for (let i = 0; i < pts.length; i += 2) {
+      const y = Math.round(pts[i][0]), x = Math.round(pts[i][1]);
+      if (y >= 0 && x >= 0 && y < S.imgH && x < S.imgW) visited[y * S.imgW + x] = 1;
+    }
+  }
+  const path = traceOrientationField(
+    S.brightness, S.mask, cache.dirX, cache.dirY, cache.coherence,
+    S.imgW, S.imgH, ink.x, ink.y, 0.05, visited
+  );
+  if (!path || path.length < 24) { toast('这一笔太短，换一个更靠近线中心的点', 'err'); return; }
+  const raw = sanitizeLineArtCurves([path])[0] || path;
+  S.curves = polylinesToCurveRecords((S.curves || []).map(c => c.points).concat([raw]));
+  S.curves = polylinesToCurveRecords(
+    deduplicateCurves(S.curves.map(c => c.points), S.brightness, S.imgW, S.imgH, 10)
+  );
+  refreshCurveOutputs();
+  setPickStroke(false);
+  setStatus(`已补一笔，现在 ${S.smoothedCurves.length} 根`);
+  toast(`已补一笔 · 共 ${S.smoothedCurves.length} 根`, 'ok');
+}
+
 // 主函数：方向场追踪提取曲线
 function extractCurvesOrientationField(imageData, w, h, brightness, mask, minBrightness = 0.3, maxCurves = 50, minLength = 80) {
   console.log('[OF Trace] 计算方向场...');
   const { dirX, dirY, coherence } = computeOrientationField(imageData, w, h, brightness, mask);
+  S._ofCache = { dirX, dirY, coherence, w, h };
 
   console.log('[OF Trace] 寻找种子点...');
-  // 按亮度排序，从最亮的点开始追踪
   const seeds = [];
-  const seedStep = Math.max(4, Math.round(Math.min(w, h) / 300));
+  const seedStep = S.lineDrawing
+    ? Math.max(3, Math.round(Math.min(w, h) / 420))
+    : Math.max(4, Math.round(Math.min(w, h) / 300));
+  const cohMin = S.lineDrawing ? 0.08 : 0.15;
   for (let y = seedStep; y < h - seedStep; y += seedStep) {
     for (let x = seedStep; x < w - seedStep; x += seedStep) {
       const idx = y * w + x;
-      if (mask[idx] && brightness[idx] >= minBrightness && coherence[idx] > 0.15) {
+      if (mask[idx] && brightness[idx] >= minBrightness && coherence[idx] > cohMin) {
         seeds.push({ x, y, brightness: brightness[idx], coherence: coherence[idx] });
       }
     }
   }
-  // 按亮度*一致性排序
   seeds.sort((a, b) => (b.brightness * b.coherence) - (a.brightness * a.coherence));
   console.log(`[OF Trace] 候选种子点: ${seeds.length}`);
 
@@ -4104,10 +4241,16 @@ function extractCurvesOrientationField(imageData, w, h, brightness, mask, minBri
     }
   }
 
-  console.log(`[OF Trace] 追踪到 ${curves.length} 条曲线，开始连接短段...`);
+  console.log(`[OF Trace] 追踪到 ${curves.length} 条曲线`);
+  if (S.lineDrawing) {
+    let bundled = bundleOverdrawnStrokes(curves, w, h, 0.03);
+    bundled = sanitizeLineArtCurves(bundled);
+    console.log(`[OF Trace] 叠笔合并 ${curves.length} -> ${bundled.length}`);
+    return bundled;
+  }
   const useV2 = !(document.getElementById('connectV2')) || document.getElementById('connectV2').checked;
   const connected = useV2 ? connectShortSegmentsV2(curves, w, h) : connectShortSegments(curves, w, h);
-  console.log(`[OF Trace] 最终 ${connected.length} 条曲线`);
+  console.log(`[OF Trace] 连接后 ${connected.length} 条曲线`);
   return connected;
 }
 
@@ -4245,36 +4388,21 @@ function extractAll() {
     drawBinary('canvasSkeleton', S.skeletonPruned, S.imgW, S.imgH);
 
     if (S.traceMode === 'of') {
-      // 线稿：沿骨架走完整中心线再拼接（方向场在1px骨架上会过早停）
-      const useSkeletonGraph = !!S.lineDrawing;
-      if (useSkeletonGraph) {
-        setStatus('5/6 骨架图论追踪...');
-        S._lastTraceMode = S.lineDrawing ? '交点穿过追踪' : '骨架图论追踪';
+      if (S.lineDrawing) {
+        setStatus('5/6 按走向追踪（交叉口保持惯性）...');
+        S._lastTraceMode = '走向惯性追踪';
         try {
           const p = getParams();
-          const minLen = S.lineDrawing ? 24 : p.minLength;
-          let rawCurves = S.lineDrawing
-            ? traceStrokesHuman(S.skeletonPruned, S.imgW, S.imgH, minLen)
-            : extractCurvesSkeletonGraph(S.skeletonPruned, S.imgW, S.imgH, minLen);
-          if (!S.lineDrawing) rawCurves = connectShortSegmentsV2(rawCurves, S.imgW, S.imgH);
-          if (S.lineDrawing) rawCurves = bundleOverdrawnStrokes(rawCurves, S.imgW, S.imgH, 0.032);
-          rawCurves = deduplicateCurves(rawCurves, S.brightness, S.imgW, S.imgH, S.lineDrawing ? 12 : 6);
-          if (S.lineDrawing) rawCurves = filterLabelCurves(rawCurves, S.imgW, S.imgH);
-          S.curves = rawCurves.map((curve, i) => {
-            const start = curve[0], end = curve[curve.length - 1];
-            const angle = Math.atan2(end[0] - start[0], end[1] - start[1]) * 180 / Math.PI;
-            return {
-              key: `curve_${String(i + 1).padStart(2, '0')}`,
-              name: `Curve ${i + 1}`,
-              points: curve,
-              length: curve.length,
-              endpoint: end,
-              angle: angle,
-            };
-          });
+          let rawCurves = extractCurvesOrientationField(
+            S.rgb, S.imgW, S.imgH, S.brightness, S.mask,
+            0.06, 24, Math.max(40, p.minLength)
+          );
+          rawCurves = deduplicateCurves(rawCurves, S.brightness, S.imgW, S.imgH, 10);
+          rawCurves = filterLabelCurves(rawCurves, S.imgW, S.imgH);
+          S.curves = polylinesToCurveRecords(rawCurves);
         } catch(e) {
-          setStatus('骨架追踪错误: ' + e.message);
-          console.error('SkeletonGraph error:', e);
+          setStatus('走向追踪错误: ' + e.message);
+          console.error('OF line-art error:', e);
           S.curves = [];
         }
       } else {
@@ -4282,26 +4410,13 @@ function extractAll() {
         S._lastTraceMode = '方向场追踪';
         try {
           const p = getParams();
-          const ofMask = (S.lineDrawing && S.skeletonPruned) ? S.skeletonPruned : S.mask;
-          const ofMinB = S.lineDrawing ? 0.05 : p.brightLayer;
           let rawCurves = extractCurvesOrientationField(
-            S.rgb, S.imgW, S.imgH, S.brightness, ofMask,
-            ofMinB, 80, p.minLength
+            S.rgb, S.imgW, S.imgH, S.brightness, S.mask,
+            p.brightLayer, 80, p.minLength
           );
           setStatus('4.5/5 曲线去重...');
           rawCurves = deduplicateCurves(rawCurves, S.brightness, S.imgW, S.imgH, 6);
-          S.curves = rawCurves.map((curve, i) => {
-            const start = curve[0], end = curve[curve.length - 1];
-            const angle = Math.atan2(end[0] - start[0], end[1] - start[1]) * 180 / Math.PI;
-            return {
-              key: `curve_${String(i + 1).padStart(2, '0')}`,
-              name: `Curve ${i + 1}`,
-              points: curve,
-              length: curve.length,
-              endpoint: end,
-              angle: angle,
-            };
-          });
+          S.curves = polylinesToCurveRecords(rawCurves);
         } catch(e) {
           setStatus('方向场追踪错误: ' + e.message);
           console.error('OF trace error:', e);
@@ -4336,28 +4451,18 @@ function extractAll() {
       extract5MainCurves();
     }
 
-    setStatus('6/6 RDP简化+B样条+面片生成...');
-    smoothAllCurves();
-    S.triMatch = null;
-    try { S.curveLevels = classifyCurves(S.smoothedCurves, S.brightness, S.imgW, S.imgH); } catch(e) { console.error('Classify error:', e); }
-    if (S.lineDrawing && S.curveLevels) S.curveLevels = S.curveLevels.map(() => 1);
-    try { estimateCurveDepths(); } catch(e) { console.error('Depth error:', e); }
-    S.curveEdits = {}; S.edit3d.selected=-1; S.edit3d.dragHandle=-1;
-    try { S.cardMeshes = buildAllCardMeshes(); } catch(e) { console.error('Card mesh error:', e); }
+    setStatus('6/6 RDP简化+面片生成...');
     if (S.inputMode === 'tri') {
       S.view3d.preset = 'front';
       S.view3d.rotX = 0;
       S.view3d.rotY = 0;
     }
-    drawCurves('canvasCurves', S.smoothedCurves, true, true);
-    try { draw3DView(); } catch(e) { console.error('3D view error:', e); }
-    drawEditor();
-    updateCurveList();
+    refreshCurveOutputs();
     const ms = Math.round(performance.now() - t0);
     const modeTxt = (S.inputMode==='tri' ? '三视图' : '单图') + (S.lineDrawing ? ' · 线稿' : '') + (S.inputMode==='tri' && S.lineDrawing ? ' · 三向对齐' : '');
     setStatus(`完成: ${S.smoothedCurves.length} 根曲线 · ${modeTxt} · ${ms}ms`);
     if (S.inputMode === 'tri' && S.lineDrawing) {
-      toast(`线稿 ${S.smoothedCurves.length} 根。正视黄线应贴在正面墨水中心；侧视贴侧面主轮廓。俯视三张图不一致时对不齐`, 'ok', 4800);
+      toast(`线稿 ${S.smoothedCurves.length} 根。先看「曲线」页黄线是否贴墨水；缺的一笔可点选补上。俯视三张图不一致时对不齐`, 'ok', 5200);
     } else {
       toast(`提取完成：${S.smoothedCurves.length} 根曲线（${ms}ms）`, 'ok');
     }
@@ -5536,6 +5641,22 @@ document.querySelectorAll('input[type="range"]').forEach(input => {
 });
 
 document.getElementById('btnExtract').addEventListener('click', extractAll);
+document.getElementById('btnPickStroke').addEventListener('click', () => {
+  if (!S.rgb) { toast('请先导入图片并提取', 'err'); return; }
+  setPickStroke(!S.pickStroke);
+  if (S.pickStroke) {
+    switchMainView('curves');
+    toast('在「曲线」页点线稿上要补的那一笔', 'ok', 2800);
+  }
+});
+document.getElementById('canvasCurves').addEventListener('click', e => {
+  if (!S.pickStroke) return;
+  const canvas = e.target;
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (S.imgW / rect.width);
+  const y = (e.clientY - rect.top) * (S.imgH / rect.height);
+  pickStrokeAt(x, y);
+});
 
 // 精细模式：一键设置适合精细光效图的参数
 document.getElementById('btnFineMode').addEventListener('click', () => {
