@@ -1,9 +1,12 @@
-# Curve Extractor — 交接文档（Cursor 接手用）
+# Curve Extractor — 交接文档（Agent / 同事接手用）
 
-> **当前版本**：v1.4（算法回滚到 v1.1 + 三视图拖拽上传）
-> **最后更新**：2026-08-30
-> **线上地址**：https://yuculikedogandfish-droid.github.io/curve-extractor/app.html
-> **仓库**：https://github.com/yuculikedogandfish-droid/curve-extractor
+> **当前版本**：v1.4.19  
+> **最后更新**：2026-09-01  
+> **开发分支**：`dev`（日常 push）  
+> **线上分支**：`master`（GitHub Pages）  
+> **线上地址**：https://yuculikedogandfish-droid.github.io/curve-extractor/app.html  
+> **仓库**：https://github.com/yuculikedogandfish-droid/curve-extractor  
+> **版本台账与回滚**：**[VERSIONS.md](./VERSIONS.md)**（各 tag、已知问题、怎么回滚，先读这个）
 
 ---
 
@@ -223,40 +226,34 @@ curve-extractor/
 
 ---
 
-## 七、Git 版本历史（HTML 版本）
+## 七、Git 版本历史
 
-| 版本 | commit | 说明 |
-|------|--------|------|
-| v1.0 | 4c90884 | 初版：三视图识别、自动背景去除、UV面片、UX反馈 |
-| v1.1 | 6dc248e | 面片居中于曲线轴、可编辑3D预览、FBX导出 |
-| v1.2 | 47836c1 | 三视图拖拽、Otsu自动阈值、坐标轴去除、形态学改进 |
-| v1.3 | df9834c | 自动追踪模式选择、亮度感知阈值、fragmented修复 |
-| **v1.4** | **1a42f97** | **算法回滚到v1.1 + 保留三视图拖拽（当前稳定版）** |
+完整 tag / 问题 / 修改见 **[VERSIONS.md](./VERSIONS.md)**。摘要：
 
-**为什么回滚**：v1.2/v1.3 的自动阈值和自动追踪模式改动导致单图识别退化（曲线断断续续）。用户要求回到 v1.1 的算法稳定性。
-
-**v1.4 = v1.1 算法 + v1.2 的拖拽上传 UI**。
+- **v1.4**（`1a42f97`）：因 v1.2/v1.3 单图退化，算法回滚到 v1.1，保留三视图拖拽。
+- **v1.4.1–v1.4.19**：在 v1.4 上做**线稿三视图**（正交对照、交叉口走向、侧视 Z、信顶面）。当前线上目标 **v1.4.19**。
+- 光效图（黑底金带）仍走方向场；白线黑底线稿走 `traceOrientationField` 惯性过交叉，**不要**对线稿做 B 样条。
 
 ---
 
-## 八、已知问题
+## 八、已知问题（2026-09-01）
 
-1. **单图识别对不同图片需要手动调阈值**：v1.1 用固定亮度阈值（0.45），不是自动的。淡色线图可能需要调低阈值，亮白线图可能需要调高。
-2. **三视图识别效果一般**：v1.1 的三视图融合逻辑较简单，对原始 Blender 截图（有坐标轴、深灰底）效果不好。建议用 `input/tri_labeled/processed_nolabel/` 下处理好的纯黑底素材测试。
-3. **曲线追踪在交叉处可能断裂**：of 模式在线条交叉密集处可能产生短段。
-4. **面片暂不做贴图**：UV 已正确分布，但贴图由特效师在 UE 里手动做。
-5. **3D 预览是自绘 Canvas**：不是 Three.js，旋转/缩放是自定义实现，性能有限（曲线多时可能卡顿）。
+1. **三张手绘不是同一条空间线**：正视锁 XY 后，Z 不能同时贴侧视和俯视。用侧栏「信顶面」折中；要三张都准只能重画。详见 VERSIONS.md v1.4.19。
+2. **线稿叠笔 + 交叉口**：自动可能漏笔或在 T 口拐错。用「点选补一笔」，已有的笔不要重复点。
+3. **单图光效图仍可能要手调亮度阈值**（`brightThresh`）。
+4. **精细模式 / 背景容差**对纯白线黑底线稿几乎无用。
+5. **面片暂不做贴图**；3D 预览是 Canvas 自绘，曲线很多时会卡。
+6. **本文第四节行号会过时**：用 Grep 搜函数名。
 
 ---
 
 ## 九、后续方向（用户可能要求的）
 
-1. **算法改进**：在 v1.1 基础上小步迭代，一次只改一个环节，用同一张图对比验证
-2. **自动阈值**：安全的 Otsu 自动阈值（不影响单图效果的前提下）
-3. **曲线编辑增强**：3D 预览里直接拖拽曲线控制点
-4. **贴图支持**：从原图提取光带纹理，自动贴到面片上
-5. **UE 插件**：把导出流程做成 UE 编辑器插件，直接在引擎内导入
-6. **批量处理**：一次上传多张图批量导出
+1. 线稿交叉口再稳（T 口 vs X 口）、点选补笔体验
+2. 三视图笔画级对应（正/侧/顶各点一笔再拟合）
+3. 从正+侧**生成**一致俯视，给画师当描图
+4. 3D 预览里拖控制点；光带贴图到面片
+5. UE 内导入插件、批量出 FBX
 
 ---
 
@@ -276,37 +273,55 @@ python run_tri.py g2   # 测试第二组三视图
 需要 Python + Playwright。脚本会自动加载 base64 素材、触发提取、截图保存。
 
 ### 验证标准
-- demo 单图：应提取 5-6 根长曲线（每根 800 点），面片居中于曲线
-- 三视图 g1：应提取 10+ 根曲线，主长曲线连贯
-- 三视图 g2：应提取 20+ 根曲线，向上发散形态完整
+- demo 单图（光效）：应提出若干长曲线，面片居中于曲线
+- 线稿三视图 group1（`processed_nolabel`）：约 3 根、无闭环；正视/侧视黄线贴墨（信顶面=0）；俯视对不齐是预期，把信顶面拖到 100% 俯视才应贴顶图
+- Playwright：`python input/tri_labeled/debug/verify_overlay.py`（脚本在 gitignore 的 debug 目录，需本地有）
 
 ---
 
-## 十一、部署
+## 十一、部署与回滚
+
+日常：
 
 ```bash
-cd H:\tool\curve-extractor
+git checkout dest
 git add app.html
-git commit -m "描述改动"
-git push origin master
+git commit -m "v1.4.xx: 为什么改"
+git push origin dest
 ```
-push 后 GitHub Actions 自动部署，约 1-2 分钟后线上更新。
-线上地址：https://yuculikedogandfish-droid.github.io/curve-extractor/app.html
 
-**注意**：用户浏览器可能缓存旧版本，提醒用户 Ctrl+F5 强制刷新。
+上线（产品说「上线」之后）：
+
+```bash
+git checkout master
+git merge dest
+git push origin master
+git checkout dest
+```
+
+GitHub Actions（`.github/workflows/pages.yml`）在 push `master` 后约 1–2 分钟更新 Pages。  
+用户需 **Ctrl+F5** 强刷。
+
+回滚某一版 `app.html`（推荐，不 force push）：
+
+```bash
+git checkout v1.4.18 -- app.html
+git commit -m "rollback app.html to v1.4.18"
+git push
+```
 
 ---
 
-## 十二、给 Cursor Agent 的建议
+## 十二、给下一个 Agent 的建议
 
-1. **只改 app.html**：这是唯一的源文件。不要创建新的 JS/CSS 文件（单文件架构是故意的，方便部署和分享）。
-2. **改之前先读相关函数**：app.html 很大（4600+ 行），用 Grep 定位函数，不要全文通读。
-3. **小步迭代**：用户之前因为一次性大改导致退化，要求回滚。每次只改一个功能点，改完用 demo 图验证。
-4. **保留 v1.1 算法稳定性**：如果要改算法（阈值/形态学/追踪），先在新函数里实现，用开关切换，不要直接覆盖原有逻辑。
-5. **测试素材在 input/tri_labeled/processed_nolabel/**：纯黑底白线，最适合测试算法。
-6. **用户是特效师，不是程序员**：UI 反馈要清晰（toast/状态文字），参数要有默认值，不要让用户记命令。
-7. **交付物是 FBX**：最终目标是 UE 里能用的面片模型，FBX 导出是关键路径，改完要验证导出文件能正常打开。
+1. **只改 `app.html`**。单文件是故意的。
+2. **提交推 `dev`，不要自行 merge `master`。**
+3. 用 Grep 找函数，不要当行号还是 2026-08-30 那版。
+4. 小步改、同一组 group1 三视图对比。线稿不要加回 B 样条。
+5. 俯视对不齐先查「信顶面」再查几何；不要当成单纯 bug。
+6. 用户 G 是产品经理；交付是特效师能进 UE 的 FBX。
+7. 版本对不上就打开 **VERSIONS.md**。
 
 ---
 
-*本文档由 Doubao 整理，用于 Cursor Agent 接手开发。如有疑问，参考 git log 和 archive/legacy_python/ 下的旧版本文档。*
+*版本台账以 VERSIONS.md 为准。旧 Python 版在 archive/（gitignored）。*

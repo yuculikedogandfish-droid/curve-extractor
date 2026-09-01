@@ -11,10 +11,11 @@
 ## 功能
 
 - **单图识别**：上传一张正面图，自动提取曲线
-- **三视图识别**：上传正面/侧面/顶面，三角测量还原 3D 曲线（支持拖拽上传）
-- **交互式曲线编辑**：拖拽曲线上的控制点调整走向
-- **3D 面片预览**：沿曲线中心轴生成面片（1/2/3/4 片可选），UV 正确
-- **多格式导出**：FBX / OBJ / JSON / SVG / DXF
+- **三视图识别**：上传正面/侧面/顶面；正交对照；「信顶面」滑条在侧视准 / 俯视准之间折中
+- **线稿**：按走向惯性穿过交叉口；可在「曲线」页点选补一笔
+- **交互式曲线编辑**：拖拽拐点
+- **3D 面片预览**：1/2/3/4 片，UV 正确
+- **导出**：FBX / OBJ / JSON / SVG / DXF
 
 ## 使用流程
 
@@ -45,20 +46,25 @@ curve-extractor/
 └── archive/              # 旧版本归档（不要动）
 ```
 
-## 开发
+## 开发与上线
 
-详细的模块说明、函数索引、参数表、版本历史见 **[HANDOFF.md](./HANDOFF.md)**。
+- 日常改代码推 **`dev`**；**`master`** 才是 GitHub Pages 线上。
+- 详细模块说明：[HANDOFF.md](./HANDOFF.md)
+- **版本、问题、回滚**：[VERSIONS.md](./VERSIONS.md)
 
 ```bash
-# 本地预览：直接双击 app.html
-# 部署：
+# 本地：直接打开 app.html
+git checkout dest
 git add app.html
-git commit -m "改动说明"
-git push origin master
+git commit -m "v1.4.xx: 为什么改"
+git push origin dest
+
+# 上线（确认后再做）
+git checkout master && git merge dest && git push origin master
 ```
 
 ## 当前版本
 
-**v1.4** — 算法回滚到 v1.1（稳定版）+ 三视图拖拽上传。
+**v1.4.19** — 线稿三视图：走向过交叉口、侧视连续取 Z、墨水包围盒对齐、「信顶面」滑条在侧视/俯视之间折中。
 
-详见 HANDOFF.md 的版本历史。
+回滚：`git checkout v1.4.18 -- app.html`（tag 一览见 VERSIONS.md）。
