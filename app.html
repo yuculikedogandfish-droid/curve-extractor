@@ -160,7 +160,7 @@
 
 <header>
   <h1>Curve Extractor</h1>
-  <span class="subtitle">v1.4.20 · 非标准三视图先校正；正视为准；空间曲线平滑不分叉</span>
+  <span class="subtitle">v1.4.22 · 枝条精细度可调：主干 ↔ 短枝分叉</span>
   <span class="status" id="status">就绪</span>
 </header>
 
@@ -219,7 +219,7 @@
         <button class="btn btn-secondary" id="btnDemo">加载示例</button>
         <button class="btn" id="btnExtract">提取曲线</button>
         <button class="btn btn-secondary" id="btnPickStroke" style="margin-top:8px;width:100%;">点选补一笔（到「曲线」页点线稿）</button>
-        <button class="btn btn-secondary" id="btnFineMode" style="margin-top:8px;width:100%;">精细模式（推荐光效图）</button>
+        <button class="btn btn-secondary" id="btnFineMode" style="margin-top:8px;width:100%;">精细模式（光效图：合并细丝成主干）</button>
       </div>
     </div>
 
@@ -296,6 +296,15 @@
     <!-- 追踪参数 -->
     <div class="section">
       <div class="section-title">4. 曲线追踪</div>
+      <div class="form-group">
+        <label>枝条精细度 <span class="val" id="branchDetailVal">40%</span></label>
+        <input type="range" id="branchDetail" min="0" max="100" value="40">
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:#666;margin-top:2px;">
+          <span>少 · 只要主干</span>
+          <span>多 · 含短枝/分叉</span>
+        </div>
+        <div style="font-size:11px;color:#888;margin-top:4px;">拉高会保留主枝上的短分叉、以及走向略偏的长枝。拉低只留最清楚的几根主干。改完再点「提取曲线」。</div>
+      </div>
       <div class="form-group">
         <label>追踪模式</label>
         <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;">
@@ -560,6 +569,20 @@ function getParams() {
     minLength: parseInt(document.getElementById('minLength').value),
     rdpEpsilon: parseFloat(document.getElementById('rdpEpsilon').value),
     numSamples: parseInt(document.getElementById('numSamples').value),
+    branchDetail: parseFloat(document.getElementById('branchDetail').value),
+  };
+}
+
+function getBranchDetail() {
+  const el = document.getElementById('branchDetail');
+  const t = Math.max(0, Math.min(1, (el ? parseFloat(el.value) : 40) / 100));
+  return {
+    t,
+    maxCurves: Math.round(6 + t * 42),
+    minLength: Math.round(110 * (1 - t) + 18 * t),
+    tubeR: Math.max(1, Math.round(4 * (1 - t) + 1 * t)),
+    bundleGap: 0.058 * (1 - t) + 0.016 * t,
+    keepMin: Math.round(28 * (1 - t) + 12 * t),
   };
 }
 
@@ -580,6 +603,11 @@ function updateParamLabels() {
     document.getElementById('minLenVal').textContent = p.minLength;
     document.getElementById('rdpVal').textContent = p.rdpEpsilon.toFixed(1);
     document.getElementById('samplesVal').textContent = p.numSamples;
+    if (document.getElementById('branchDetailVal')) {
+      const t = (p.branchDetail || 0) / 100;
+      const hint = t < 0.34 ? '偏主干' : t < 0.67 ? '主干+分枝' : '含短枝';
+      document.getElementById('branchDetailVal').textContent = Math.round(p.branchDetail) + '% · ' + hint;
+    }
   } catch(e) {
     console.error('updateParamLabels error:', e);
     setStatus('Error: ' + e.message);
@@ -1984,7 +2012,6 @@ function autoAdaptParams() {
   document.getElementById('dilateRadius').value = dilateRadius;
   document.getElementById('minObjectSize').value = minObjectSize;
   document.getElementById('pruneLength').value = pruneLength;
-  document.getElementById('minLength').value = minPathLength;
   updateParamLabels();
 
   console.log(`[AutoAdapt] 参数: close=${closeRadius}, dilate=${dilateRadius}, minObj=${minObjectSize}, prune=${pruneLength}, minLen=${minPathLength}`);
@@ -3505,15 +3532,7 @@ function estimateCurveDepths() {
 
       // 根部汇聚（z接近0），向外逐渐散开
       const spreadFactor = t * t * (3 - 2 * t); // smoothstep
-
-      // 沿曲线的自然扰动（使用正弦波模拟有机变化）
-      const wave1 = Math.sin(t * Math.PI * 3 + i * 1.7) * 25;
-      const wave2 = Math.sin(t * Math.PI * 5 + i * 0.9) * 12;
-
-      // 末端稍微向上翘
-      const tipLift = t > 0.7 ? (t - 0.7) * 40 : 0;
-
-      profile[j] = baseZ * spreadFactor + wave1 * spreadFactor + wave2 * spreadFactor * 0.5 - tipLift;
+      profile[j] = baseZ * spreadFactor;
     }
 
     depths.push(baseZ * 0.3); // 保留平均深度用于排序
@@ -3807,7 +3826,7 @@ function traceOrientationField(brightness, mask, dirX, dirY, coherence, w, h, se
     const direction = d === 0 ? 1 : -1;
     let cx = seedX, cy = seedY;
     let smoothDx = 0, smoothDy = 0;
-    const emaAlpha = S.lineDrawing ? 0.1 : 0.3;
+    const emaAlpha = S.lineDrawing ? 0.1 : 0.12;
     const localVisited = new Set();
     let visitedHits = 0;
     let gapCount = 0;
@@ -3914,11 +3933,17 @@ function traceOrientationField(brightness, mask, dirX, dirY, coherence, w, h, se
         smoothDy = ndy / nmag;
       } else {
         const coh = coherence[idx] || 0.5;
-        const alpha = emaAlpha + coh * 0.4;
-        smoothDx = smoothDx * (1 - alpha) + dx * alpha;
-        smoothDy = smoothDy * (1 - alpha) + dy * alpha;
-        const smag = Math.sqrt(smoothDx*smoothDx + smoothDy*smoothDy) || 1;
-        smoothDx /= smag; smoothDy /= smag;
+        const stick = 0.72;
+        if (dx * smoothDx + dy * smoothDy >= 0.2) {
+          const alpha = emaAlpha + coh * 0.2;
+          let ndx = smoothDx * (1 - alpha) + dx * alpha;
+          let ndy = smoothDy * (1 - alpha) + dy * alpha;
+          ndx = ndx * (1 - stick) + smoothDx * stick;
+          ndy = ndy * (1 - stick) + smoothDy * stick;
+          const smag = Math.hypot(ndx, ndy) || 1;
+          smoothDx = ndx / smag;
+          smoothDy = ndy / smag;
+        }
       }
 
       cx += smoothDx * direction * stepSize;
@@ -3930,11 +3955,22 @@ function traceOrientationField(brightness, mask, dirX, dirY, coherence, w, h, se
   for (let i = halfPaths[1].length - 1; i >= 0; i--) path.push(halfPaths[1][i]);
   for (let i = 0; i < halfPaths[0].length; i++) path.push(halfPaths[0][i]);
 
-  for (let i = 0; i < path.length; i += 3) {
-    visited[path[i][0] * w + path[i][1]] = 1;
-  }
-
+  stampVisitedTube(visited, path, w, h, S.lineDrawing ? 1 : (S._tubeR || 3));
   return path;
+}
+
+function stampVisitedTube(visited, path, w, h, radius) {
+  const r = Math.max(0, radius | 0);
+  for (let i = 0; i < path.length; i++) {
+    const y = path[i][0], x = path[i][1];
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (dx * dx + dy * dy > r * r) continue;
+        const ny = y + dy, nx = x + dx;
+        if (ny >= 0 && nx >= 0 && ny < h && nx < w) visited[ny * w + nx] = 1;
+      }
+    }
+  }
 }
 
 // 后处理：连接短段为长曲线
@@ -4718,10 +4754,33 @@ function extractCurvesOrientationField(imageData, w, h, brightness, mask, minBri
     console.log(`[OF Trace] 叠笔合并 ${curves.length} -> ${bundled.length}`);
     return bundled;
   }
+  let ribbons = bundleOverdrawnStrokes(curves, w, h, S._bundleGap || 0.045);
+  ribbons = ribbons.map(c => stripHighFreqZigzag(openFalseLoop(c))).filter(c => c && c.length >= (S._keepMin || 24));
   const useV2 = !(document.getElementById('connectV2')) || document.getElementById('connectV2').checked;
-  const connected = useV2 ? connectShortSegmentsV2(curves, w, h) : connectShortSegments(curves, w, h);
-  console.log(`[OF Trace] 连接后 ${connected.length} 条曲线`);
+  const connected = useV2 ? connectShortSegmentsV2(ribbons, w, h) : connectShortSegments(ribbons, w, h);
+  console.log(`[OF Trace] 光带主干 ${curves.length} -> ${connected.length}`);
   return connected;
+}
+
+function stripHighFreqZigzag(pts) {
+  if (!pts || pts.length < 16) return pts;
+  const win = 6;
+  const keep = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const prev = keep[keep.length - 1];
+    const dx = pts[i][1] - prev[1], dy = pts[i][0] - prev[0];
+    const dm = Math.hypot(dx, dy);
+    if (dm < 0.8) continue;
+    if (keep.length >= win + 1) {
+      const a = keep[keep.length - win];
+      const hx = prev[1] - a[1], hy = prev[0] - a[0];
+      const hm = Math.hypot(hx, hy) || 1;
+      const dot = (dx * hx + dy * hy) / (dm * hm);
+      if (dot < -0.25 && dm < 18) continue;
+    }
+    keep.push(pts[i]);
+  }
+  return keep.length >= 8 ? keep : pts;
 }
 
 function laplacianSmooth(points, iters, lambda) {
@@ -4848,8 +4907,10 @@ function smoothAllCurves() {
       const smoothed = fitSmoothPolyline(cd.points, n, eps);
       S.smoothedCurves.push({ ...cd, control, smoothed });
     } else {
-      const control = rdpSimplify(cd.points, p.rdpEpsilon);
-      const smoothed = bsplineInterpolate(control, p.numSamples, 3);
+      const eps = Math.max(5, p.rdpEpsilon);
+      const n = Math.min(Math.max(p.numSamples, 160), 600);
+      const control = rdpSimplify(laplacianSmooth(cd.points, 6, 0.4), eps);
+      const smoothed = fitSmoothPolyline(cd.points, n, eps);
       S.smoothedCurves.push({ ...cd, control, smoothed });
     }
   }
@@ -4962,9 +5023,13 @@ function extractAll() {
         S._lastTraceMode = '方向场追踪';
         try {
           const p = getParams();
+          const d = getBranchDetail();
+          S._tubeR = d.tubeR;
+          S._bundleGap = d.bundleGap;
+          S._keepMin = d.keepMin;
           let rawCurves = extractCurvesOrientationField(
             S.rgb, S.imgW, S.imgH, S.brightness, S.mask,
-            p.brightLayer, 80, p.minLength
+            p.brightLayer, d.maxCurves, d.minLength
           );
           setStatus('4.5/5 曲线去重...');
           rawCurves = deduplicateCurves(rawCurves, S.brightness, S.imgW, S.imgH, 6);
@@ -5093,9 +5158,7 @@ function editorMouseMove(e) {
   const y = (e.clientY - rect.top) * scaleY;
   const cd = S.smoothedCurves[S.selectedCurve];
   cd.control[S.dragPoint] = [y, x];
-  cd.smoothed = S.lineDrawing
-    ? catmullRomOpen(cd.control, getParams().numSamples)
-    : bsplineInterpolate(cd.control, getParams().numSamples, 3);
+  cd.smoothed = catmullRomOpen(cd.control, getParams().numSamples);
   drawEditor();
   drawCurves('canvasCurves', S.smoothedCurves, true, true);
 }
@@ -5167,7 +5230,6 @@ function buildCurveWorldPoints(cd, idx) {
       // === 单图：启发式伪深度 ===
       z = depthProfile ? depthProfile[pi]*1.2 : 0;
       z += baseZOffset*spread;
-      z += Math.sin(t*Math.PI*2 + idx*1.7)*30*spread;
     }
     // 应用3D编辑偏移（手柄偏移按高斯平滑扩散到整条曲线）
     const off = getEditOffset(idx, pi, n);
@@ -5932,7 +5994,7 @@ function exportJSON() {
   if (!S.smoothedCurves.length) { setStatus('无曲线可导出'); return; }
   if (!S.cardMeshes) try { buildAllCardMeshes(); } catch (e) { console.error(e); }
   const data = {
-    version: 'v1.4.20',
+    version: 'v1.4.22',
     tool: 'Curve Extractor',
     imgW: S.imgW,
     imgH: S.imgH,
@@ -6266,12 +6328,14 @@ document.getElementById('canvasCurves').addEventListener('click', e => {
 
 // 精细模式：一键设置适合精细光效图的参数
 document.getElementById('btnFineMode').addEventListener('click', () => {
-  document.getElementById('closeRadius').value = 2;
-  document.getElementById('dilateRadius').value = 0;
-  document.getElementById('minObjectSize').value = 50;
-  document.getElementById('pruneLength').value = 5;
-  document.getElementById('minLength').value = 20;
-  document.getElementById('brightLayer').value = 0.3;
+  document.getElementById('branchDetail').value = 75;
+  document.getElementById('closeRadius').value = 4;
+  document.getElementById('dilateRadius').value = 1;
+  document.getElementById('minObjectSize').value = 200;
+  document.getElementById('pruneLength').value = 12;
+  document.getElementById('minLength').value = 40;
+  document.getElementById('brightLayer').value = 0.32;
+  document.getElementById('rdpEpsilon').value = 7;
   updateParamLabels();
   setStatus('已切换到精细模式，正在重新提取...');
   setTimeout(extractAll, 100);
@@ -6286,7 +6350,7 @@ document.getElementById('btnDemo').addEventListener('click', () => {
 });
 
 // 参数滑条实时更新标签
-['hueMin','hueMax','satMin','valMin','brightThresh','closeRadius','dilateRadius','minObjectSize','pruneLength','rootYRatio','centerYRatio','minLength','rdpEpsilon','numSamples'].forEach(id => {
+['hueMin','hueMax','satMin','valMin','brightThresh','closeRadius','dilateRadius','minObjectSize','pruneLength','rootYRatio','centerYRatio','minLength','rdpEpsilon','numSamples','branchDetail'].forEach(id => {
   document.getElementById(id).addEventListener('input', updateParamLabels);
 });
 

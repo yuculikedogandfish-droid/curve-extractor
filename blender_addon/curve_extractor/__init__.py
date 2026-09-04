@@ -4,7 +4,7 @@
 bl_info = {
     "name": "Curve Extractor",
     "author": "Curve Extractor",
-    "version": (1, 4, 19),
+    "version": (1, 4, 22),
     "blender": (3, 3, 0),
     "location": "View3D > Sidebar > Curve Extractor",
     "description": "从 Curve Extractor JSON 导入 3D 曲线并生成交叉面片",

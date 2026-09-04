@@ -1,7 +1,7 @@
 # Curve Extractor — 交接文档（Agent / 同事接手用）
 
-> **当前版本**：v1.4.20  
-> **最后更新**：2026-09-04  
+> **当前版本**：v1.4.22  
+> **最后更新**：2026-09-05  
 > **开发分支**：`dev`（日常 push）  
 > **线上分支**：`master`（GitHub Pages）  
 > **线上地址**：https://yuculikedogandfish-droid.github.io/curve-extractor/app.html  
@@ -232,7 +232,7 @@ curve-extractor/
 完整 tag / 问题 / 修改见 **[VERSIONS.md](./VERSIONS.md)**。摘要：
 
 - **v1.4**（`1a42f97`）：因 v1.2/v1.3 单图退化，算法回滚到 v1.1，保留三视图拖拽。
-- **v1.4.1–v1.4.20**：在 v1.4 上做**线稿三视图**（正交对照、交叉口走向、侧视 Z、信顶面、非标准三视图校正）。当前线上目标 **v1.4.20**。
+- **v1.4.1–v1.4.22**：在 v1.4 上做**线稿三视图**与光效图主干。当前线上目标 **v1.4.22**。
 - 光效图（黑底金带）仍走方向场；白线黑底线稿走 `traceOrientationField` 惯性过交叉，**不要**对线稿做 B 样条。
 
 ---
@@ -285,19 +285,19 @@ python run_tri.py g2   # 测试第二组三视图
 日常：
 
 ```bash
-git checkout dest
+git checkout dev
 git add app.html
 git commit -m "v1.4.xx: 为什么改"
-git push origin dest
+git push origin dev
 ```
 
 上线（产品说「上线」之后）：
 
 ```bash
 git checkout master
-git merge dest
+git merge dev
 git push origin master
-git checkout dest
+git checkout dev
 ```
 
 GitHub Actions（`.github/workflows/pages.yml`）在 push `master` 后约 1–2 分钟更新 Pages。  

@@ -56,17 +56,17 @@ curve-extractor/
 
 ```bash
 # 本地：直接打开 app.html
-git checkout dest
+git checkout dev
 git add app.html
 git commit -m "v1.4.xx: 为什么改"
-git push origin dest
+git push origin dev
 
 # 上线（确认后再做）
-git checkout master && git merge dest && git push origin master
+git checkout master && git merge dev && git push origin master
 ```
 
 ## 当前版本
 
-**v1.4.20** — 非标准三视图先校正到正交；XY 锁正视；线稿收成平滑完整空间曲线。JSON 可给 Blender 插件。
+**v1.4.22** — 光效图提主干不折返；「枝条精细度」可调短枝/分叉多少。三视图仍可先校正。JSON 给 Blender 插件。
 
-回滚：`git checkout v1.4.19 -- app.html`（tag 一览见 VERSIONS.md）。
+回滚：`git checkout v1.4.20 -- app.html`（tag 一览见 VERSIONS.md）。

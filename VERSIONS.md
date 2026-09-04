@@ -2,10 +2,10 @@
 
 > **当前开发分支**：`dev`（日常提交都推这里）  
 > **当前线上**：`master` → GitHub Pages  
-> **当前版本**：v1.4.20  
+> **当前版本**：v1.4.22  
 > **线上地址**：https://yuculikedogandfish-droid.github.io/curve-extractor/app.html  
 > **仓库**：https://github.com/yuculikedogandfish-droid/curve-extractor  
-> **更新日期**：2026-09-04
+> **更新日期**：2026-09-05
 
 本文给后续 Agent 和同事用：先看「怎么开发 / 怎么回滚」，再按下表对版本。详细模块说明见 [HANDOFF.md](./HANDOFF.md)。
 
@@ -22,17 +22,17 @@
 
 ```bash
 # 开发
-git checkout dest
+git checkout dev
 # …改 app.html…
 git add app.html
 git commit -m "v1.4.xx: 一句话说明为什么改"
-git push origin dest
+git push origin dev
 
 # 上线（产品确认后再做）
 git checkout master
-git merge dest
+git merge dev
 git push origin master
-git checkout dest
+git checkout dev
 ```
 
 唯一需要改的源文件是 **`app.html`**（单文件前端）。不要拆成多文件。
@@ -44,7 +44,7 @@ git checkout dest
 线上或本地回到某一版，只换 `app.html`，留一条新 commit：
 
 ```bash
-git checkout dest          # 或 master（若要回滚线上）
+git checkout dev          # 或 master（若要回滚线上）
 git checkout v1.4.18 -- app.html
 git add app.html
 git commit -m "rollback app.html to v1.4.18"
@@ -91,7 +91,8 @@ python input/tri_labeled/debug/verify_overlay.py
 | **v1.4.17** | `0a9e64c` | 线稿按走向惯性过交叉；点选补一笔 | 交叉口打结明显改善 |
 | **v1.4.18** | `83d074b` | 侧视 Z 沿墨水连续走，交叉口不再出台阶 | 侧视贴墨约 98% |
 | **v1.4.19** | `d624bf5` | 墨水包围盒对齐 +「信顶面」滑条 | 可回滚 |
-| **v1.4.20** | `cdebb86` | **当前**：非标准三视图先校正；正视为准；空间曲线平滑 | **线上目标** |
+| **v1.4.20** | `b45ae30` | 非标准三视图先校正；正视为准；空间曲线平滑 | 可回滚 |
+| **v1.4.22** | `021f9f6` | **当前**：光效图主干不折返；枝条精细度可调 | **线上目标** |
 
 ---
 
@@ -179,12 +180,17 @@ Z 取侧面骨架最长路径，让侧视黄线落在侧面墨水上。
   - 100%：俯视 ~99%，侧视 ~18%
 - **几何事实**：XY 锁在正面时，Z 不能同时满足侧视和俯视。形状本身画得不一致时，滑条是产品方案，不是「三张同时贴死」。
 
-### v1.4.20 `cdebb86`（当前）
+### v1.4.20 `b45ae30`
 - **提取前校正为标准三视图**（默认开）：侧/顶墨水映射到正面同一画布——同一高度、同一左右宽、同一深度比例。**正面不变形**。
 - **正视为准**：XY 锁正面曲线；侧/顶只提供 Z。三张仍对不齐时优先贴正视。
 - **完整平滑空间曲线**：线稿用拉普拉斯去抖 + RDP + 向心 Catmull-Rom（仍不用三次 B 样条，避免超调）；三视图线稿不再在交叉口拆成多段。
 - JSON 导出含 `points3d` / `points3d_yup`，给配套 Blender 插件导入。
 - Blender 插件源码在 `blender_addon/curve_extractor/`。
+
+### v1.4.22 `021f9f6`（当前）
+- **光效图**：沿主干惯性走，细丝并成枝条，去掉短折返；单图深度不再加正弦假抖动（侧视/俯视不再一折一折）。
+- **枝条精细度**滑条（0–100）：少=只要主干，多=短枝和方向略偏的长枝。改完再点「提取曲线」。精细模式≈75%。
+- 3D「一级/二级/三级」只是显示开关，不会多抽出枝条。
 
 ---
 
@@ -198,7 +204,7 @@ Z 取侧面骨架最长路径，让侧视黄线落在侧面墨水上。
 
 ---
 
-## 关键代码入口（v1.4.19）
+## 关键代码入口（v1.4.22）
 
 | 主题 | 函数 / 状态 |
 |------|-------------|
@@ -206,6 +212,7 @@ Z 取侧面骨架最长路径，让侧视黄线落在侧面墨水上。
 | 线稿检测 | `S.lineDrawing`、`detectLineDrawing()` |
 | 线稿追踪 | `extractCurvesOrientationField()` → `traceOrientationField()`（惯性 + 前瞻） |
 | 点选补笔 | `pickStrokeAt()`、`#btnPickStroke` |
+| 枝条精细度 | `getBranchDetail()`、`#branchDetail` |
 | 三视图深度 | `processTriViews()`、`reconstructTriView()`、`S.triTrustTop`、`S.triAlignInk`、`rectifyTriViewsToOrtho()` |
 | 3D 与导出同源 | `buildCurveWorldPoints()` |
 | 正交对照 | `drawOrthoBlueprint()`，`S.view3d.preset` = front/side/top |
