@@ -44,3 +44,8 @@ _c.js
 
 # Archive (legacy Python version, historical debug screenshots)
 archive/
+
+# Packaged zips for colleagues (rebuild from app.html + blender_addon)
+release/*.zip
+release/html/CurveExtractor.html
+

@@ -15,7 +15,7 @@
 - **线稿**：按走向惯性穿过交叉口；可在「曲线」页点选补一笔
 - **交互式曲线编辑**：拖拽拐点
 - **3D 面片预览**：1/2/3/4 片，UV 正确
-- **导出**：FBX / OBJ / JSON / SVG / DXF
+- **导出**：FBX（给 UE）/ JSON（给 Blender 插件）/ OBJ / SVG / DXF
 
 ## 使用流程
 
@@ -36,7 +36,9 @@
 
 ```
 curve-extractor/
-├── app.html              # 主文件（唯一需要编辑的）
+├── app.html              # 主文件（唯一需要编辑的网页工具）
+├── blender_addon/        # Blender 插件源码（导入 JSON → 曲线+交叉面片）
+├── release/              # 发给同事的 zip 打在这里（zip 不入库）
 ├── HANDOFF.md            # 交接文档（详细模块说明，给 Cursor 用）
 ├── index.html            # Pages 入口
 ├── input/                # 测试素材
@@ -65,6 +67,6 @@ git checkout master && git merge dest && git push origin master
 
 ## 当前版本
 
-**v1.4.19** — 线稿三视图：走向过交叉口、侧视连续取 Z、墨水包围盒对齐、「信顶面」滑条在侧视/俯视之间折中。
+**v1.4.20** — 非标准三视图先校正到正交；XY 锁正视；线稿收成平滑完整空间曲线。JSON 可给 Blender 插件。
 
-回滚：`git checkout v1.4.18 -- app.html`（tag 一览见 VERSIONS.md）。
+回滚：`git checkout v1.4.19 -- app.html`（tag 一览见 VERSIONS.md）。

@@ -1,7 +1,7 @@
 # Curve Extractor — 交接文档（Agent / 同事接手用）
 
-> **当前版本**：v1.4.19  
-> **最后更新**：2026-09-01  
+> **当前版本**：v1.4.20  
+> **最后更新**：2026-09-04  
 > **开发分支**：`dev`（日常 push）  
 > **线上分支**：`master`（GitHub Pages）  
 > **线上地址**：https://yuculikedogandfish-droid.github.io/curve-extractor/app.html  
@@ -36,7 +36,8 @@
 
 ```
 curve-extractor/
-├── app.html                  # 主文件（所有代码，唯一需要编辑的文件）
+├── app.html                  # 网页主文件
+├── blender_addon/            # Blender 插件（导入 JSON）
 ├── index.html                # GitHub Pages 入口（重定向到 app.html）
 ├── README.md                 # 项目说明（需更新，当前是旧Python版）
 ├── .gitignore
@@ -55,7 +56,7 @@ curve-extractor/
     └── debug_screenshots/    # 历史调试截图
 ```
 
-**你只需要关心 `app.html`**。其他都是素材和归档。
+**网页只改 `app.html`。** Blender 插件改 `blender_addon/`。其他是素材和归档。
 
 ---
 
@@ -231,7 +232,7 @@ curve-extractor/
 完整 tag / 问题 / 修改见 **[VERSIONS.md](./VERSIONS.md)**。摘要：
 
 - **v1.4**（`1a42f97`）：因 v1.2/v1.3 单图退化，算法回滚到 v1.1，保留三视图拖拽。
-- **v1.4.1–v1.4.19**：在 v1.4 上做**线稿三视图**（正交对照、交叉口走向、侧视 Z、信顶面）。当前线上目标 **v1.4.19**。
+- **v1.4.1–v1.4.20**：在 v1.4 上做**线稿三视图**（正交对照、交叉口走向、侧视 Z、信顶面、非标准三视图校正）。当前线上目标 **v1.4.20**。
 - 光效图（黑底金带）仍走方向场；白线黑底线稿走 `traceOrientationField` 惯性过交叉，**不要**对线稿做 B 样条。
 
 ---
@@ -305,8 +306,8 @@ GitHub Actions（`.github/workflows/pages.yml`）在 push `master` 后约 1–2 
 回滚某一版 `app.html`（推荐，不 force push）：
 
 ```bash
-git checkout v1.4.18 -- app.html
-git commit -m "rollback app.html to v1.4.18"
+git checkout v1.4.19 -- app.html
+git commit -m "rollback app.html to v1.4.19"
 git push
 ```
 
@@ -314,10 +315,10 @@ git push
 
 ## 十二、给下一个 Agent 的建议
 
-1. **只改 `app.html`**。单文件是故意的。
+1. **网页只改 `app.html`**。单文件是故意的。插件走 `blender_addon/`。
 2. **提交推 `dev`，不要自行 merge `master`。**
 3. 用 Grep 找函数，不要当行号还是 2026-08-30 那版。
-4. 小步改、同一组 group1 三视图对比。线稿不要加回 B 样条。
+4. 小步改、同一组 group1 三视图对比。线稿不要用三次 B 样条；平滑用 `fitSmoothPolyline`（拉普拉斯 + RDP + 向心 Catmull-Rom）。
 5. 俯视对不齐先查「信顶面」再查几何；不要当成单纯 bug。
 6. 用户 G 是产品经理；交付是特效师能进 UE 的 FBX。
 7. 版本对不上就打开 **VERSIONS.md**。

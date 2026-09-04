@@ -2,10 +2,10 @@
 
 > **当前开发分支**：`dev`（日常提交都推这里）  
 > **当前线上**：`master` → GitHub Pages  
-> **当前版本**：v1.4.19（commit `d624bf5`）  
+> **当前版本**：v1.4.20  
 > **线上地址**：https://yuculikedogandfish-droid.github.io/curve-extractor/app.html  
 > **仓库**：https://github.com/yuculikedogandfish-droid/curve-extractor  
-> **更新日期**：2026-09-01
+> **更新日期**：2026-09-04
 
 本文给后续 Agent 和同事用：先看「怎么开发 / 怎么回滚」，再按下表对版本。详细模块说明见 [HANDOFF.md](./HANDOFF.md)。
 
@@ -90,7 +90,8 @@ python input/tri_labeled/debug/verify_overlay.py
 | **v1.4.16** | `996775a` | 线稿不 B 样条超调；侧视 Z 沿轮廓 | 可回滚点 |
 | **v1.4.17** | `0a9e64c` | 线稿按走向惯性过交叉；点选补一笔 | 交叉口打结明显改善 |
 | **v1.4.18** | `83d074b` | 侧视 Z 沿墨水连续走，交叉口不再出台阶 | 侧视贴墨约 98% |
-| **v1.4.19** | `d624bf5` | **当前**：墨水包围盒对齐 +「信顶面」滑条 | **线上目标** |
+| **v1.4.19** | `d624bf5` | 墨水包围盒对齐 +「信顶面」滑条 | 可回滚 |
+| **v1.4.20** | `cdebb86` | **当前**：非标准三视图先校正；正视为准；空间曲线平滑 | **线上目标** |
 
 ---
 
@@ -171,12 +172,19 @@ Z 取侧面骨架最长路径，让侧视黄线落在侧面墨水上。
 - group1：侧视贴墨 ~**98.4%**，正视 ~99.5%。
 - **未解决**：俯视叠不上——正+侧已定 XYZ，手绘顶图不是同一条空间线。
 
-### v1.4.19 `d624bf5`（当前）
+### v1.4.19 `d624bf5`
 - **按墨水包围盒对齐**三张图（消留白/缩放差）。
 - **「信顶面」0–100%**：深度在侧面与顶面之间折中。
   - 0%：侧视 ~98%，俯视 ~16%
   - 100%：俯视 ~99%，侧视 ~18%
 - **几何事实**：XY 锁在正面时，Z 不能同时满足侧视和俯视。形状本身画得不一致时，滑条是产品方案，不是「三张同时贴死」。
+
+### v1.4.20 `cdebb86`（当前）
+- **提取前校正为标准三视图**（默认开）：侧/顶墨水映射到正面同一画布——同一高度、同一左右宽、同一深度比例。**正面不变形**。
+- **正视为准**：XY 锁正面曲线；侧/顶只提供 Z。三张仍对不齐时优先贴正视。
+- **完整平滑空间曲线**：线稿用拉普拉斯去抖 + RDP + 向心 Catmull-Rom（仍不用三次 B 样条，避免超调）；三视图线稿不再在交叉口拆成多段。
+- JSON 导出含 `points3d` / `points3d_yup`，给配套 Blender 插件导入。
+- Blender 插件源码在 `blender_addon/curve_extractor/`。
 
 ---
 
@@ -198,12 +206,12 @@ Z 取侧面骨架最长路径，让侧视黄线落在侧面墨水上。
 | 线稿检测 | `S.lineDrawing`、`detectLineDrawing()` |
 | 线稿追踪 | `extractCurvesOrientationField()` → `traceOrientationField()`（惯性 + 前瞻） |
 | 点选补笔 | `pickStrokeAt()`、`#btnPickStroke` |
-| 三视图深度 | `processTriViews()`、`reconstructTriView()`、`S.triTrustTop`、`S.triAlignInk` |
+| 三视图深度 | `processTriViews()`、`reconstructTriView()`、`S.triTrustTop`、`S.triAlignInk`、`rectifyTriViewsToOrtho()` |
 | 3D 与导出同源 | `buildCurveWorldPoints()` |
 | 正交对照 | `drawOrthoBlueprint()`，`S.view3d.preset` = front/side/top |
 | 面片 | `buildAllCardMeshes()`，正交模式下不画面片线框 |
 
-线稿平滑：**不要**对线稿用三次 B 样条（会超调离开墨水）；用 `rdpSimplify` + `resamplePolyline`。
+线稿平滑：**不要**对线稿用三次 B 样条（会超调离开墨水）；用 `fitSmoothPolyline`（拉普拉斯 + `rdpSimplify` + 向心 Catmull-Rom）。
 
 ---
 
