@@ -160,7 +160,7 @@
 
 <header>
   <h1>Curve Extractor</h1>
-  <span class="subtitle">v1.4.22 · 枝条精细度可调：主干 ↔ 短枝分叉</span>
+  <span class="subtitle">v1.4.24 · 分叉从主枝/根系长出，可调着生</span>
   <span class="status" id="status">就绪</span>
 </header>
 
@@ -306,6 +306,15 @@
         <div style="font-size:11px;color:#888;margin-top:4px;">拉高会保留主枝上的短分叉、以及走向略偏的长枝。拉低只留最清楚的几根主干。改完再点「提取曲线」。</div>
       </div>
       <div class="form-group">
+        <label>分叉着生 <span class="val" id="branchAttachVal">70%</span></label>
+        <input type="range" id="branchAttach" min="0" max="100" value="70">
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:#666;margin-top:2px;">
+          <span>少 · 允许悬空</span>
+          <span>多 · 贴主枝/根系</span>
+        </div>
+        <div style="font-size:11px;color:#888;margin-top:4px;">按原图把分叉接到最近的主枝或根部，沿光带走过去，不把两根拼成折线。悬空就拉高；接过头就拉低。改完再点「提取曲线」。</div>
+      </div>
+      <div class="form-group">
         <label>追踪模式</label>
         <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;">
           <button id="modeOF" class="btn btn-sm" style="flex:1;background:#FFD700;color:#000;">方向场</button>
@@ -318,7 +327,7 @@
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
           <input type="checkbox" id="connectV2" checked> 改进短段连接
         </label>
-        <div style="font-size:11px;color:#888;margin-top:2px;">两端配对并按走向衔接断裂曲线。取消则回退 v1.1 连接逻辑</div>
+        <div style="font-size:11px;color:#888;margin-top:2px;">断裂处按走向接上。分叉只接到主干上，不会把两根拼成折线。取消则回退 v1.1</div>
       </div>
       <div class="form-group">
         <label>根区域 Y 比例 <span class="val" id="rootYVal">0.72</span></label>
@@ -570,6 +579,7 @@ function getParams() {
     rdpEpsilon: parseFloat(document.getElementById('rdpEpsilon').value),
     numSamples: parseInt(document.getElementById('numSamples').value),
     branchDetail: parseFloat(document.getElementById('branchDetail').value),
+    branchAttach: parseFloat(document.getElementById('branchAttach').value),
   };
 }
 
@@ -583,6 +593,18 @@ function getBranchDetail() {
     tubeR: Math.max(1, Math.round(4 * (1 - t) + 1 * t)),
     bundleGap: 0.058 * (1 - t) + 0.016 * t,
     keepMin: Math.round(28 * (1 - t) + 12 * t),
+  };
+}
+
+function getBranchAttach() {
+  const el = document.getElementById('branchAttach');
+  const t = Math.max(0, Math.min(1, (el ? parseFloat(el.value) : 70) / 100));
+  const minDim = Math.min(S.imgW || 1024, S.imgH || 1024);
+  return {
+    t,
+    maxGraft: Math.max(8, Math.round(minDim * (0.025 + 0.20 * t))),
+    walkSteps: Math.round(16 + 110 * t),
+    force: t >= 0.82,
   };
 }
 
@@ -607,6 +629,11 @@ function updateParamLabels() {
       const t = (p.branchDetail || 0) / 100;
       const hint = t < 0.34 ? '偏主干' : t < 0.67 ? '主干+分枝' : '含短枝';
       document.getElementById('branchDetailVal').textContent = Math.round(p.branchDetail) + '% · ' + hint;
+    }
+    if (document.getElementById('branchAttachVal')) {
+      const t = (p.branchAttach || 0) / 100;
+      const hint = t < 0.34 ? '可悬空' : t < 0.67 ? '近处贴上' : '沿光走贴实';
+      document.getElementById('branchAttachVal').textContent = Math.round(p.branchAttach) + '% · ' + hint;
     }
   } catch(e) {
     console.error('updateParamLabels error:', e);
@@ -4029,8 +4056,8 @@ function connectShortSegmentsV2(curves, w, h) {
 
   const maxConnectDist = S.lineDrawing
     ? Math.max(40, Math.round(Math.min(w, h) / 25))
-    : Math.max(15, Math.round(Math.min(w, h) / 50));
-  const minDot = Math.cos(Math.PI / 3); // 60°
+    : Math.max(12, Math.round(Math.min(w, h) / 70));
+  const minDot = S.lineDrawing ? Math.cos(Math.PI / 3) : Math.cos(Math.PI / 4.5); // 光效图更严，避免折返拼接
   const segs = curves.map(c => c.slice());
   const used = new Uint8Array(segs.length);
   const order = segs.map((_, i) => i).sort((a, b) => segs[b].length - segs[a].length);
@@ -4122,6 +4149,199 @@ function getEndDirection(curve, end) {
   let dx = p1[1] - p0[1], dy = p1[0] - p0[0];
   const mag = Math.sqrt(dx*dx + dy*dy) || 1;
   return [dx/mag, dy/mag];
+}
+
+function polylineArcLen(pts) {
+  let L = 0;
+  for (let i = 1; i < pts.length; i++) {
+    L += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  }
+  return L;
+}
+
+function nearestOnPolyline(pt, curve) {
+  let bestD = Infinity, bestI = 0;
+  for (let i = 0; i < curve.length; i++) {
+    const d = Math.hypot(pt[0] - curve[i][0], pt[1] - curve[i][1]);
+    if (d < bestD) { bestD = d; bestI = i; }
+  }
+  return {
+    d: bestD,
+    p: curve[bestI].slice(),
+    i: bestI,
+    t: bestI / Math.max(1, curve.length - 1),
+  };
+}
+
+function polylineTangent(curve, i) {
+  const a = Math.max(0, i - 6), b = Math.min(curve.length - 1, i + 6);
+  if (b <= a) return [1, 0];
+  const dx = curve[b][1] - curve[a][1], dy = curve[b][0] - curve[a][0];
+  const m = Math.hypot(dx, dy) || 1;
+  return [dx / m, dy / m];
+}
+
+function snapRootToPoint(curve, target) {
+  const out = curve.map(p => p.slice());
+  out[0] = [target[0], target[1]];
+  const n = Math.min(16, Math.max(5, (out.length * 0.14) | 0));
+  for (let iter = 0; iter < 5; iter++) {
+    const b = out.map(p => p.slice());
+    for (let i = 1; i < n && i < out.length - 1; i++) {
+      const wgt = i === n - 1 ? 0.18 : 0.46;
+      b[i][0] = out[i][0] * (1 - wgt) + (out[i - 1][0] + out[i + 1][0]) * 0.5 * wgt;
+      b[i][1] = out[i][1] * (1 - wgt) + (out[i - 1][1] + out[i + 1][1]) * 0.5 * wgt;
+    }
+    for (let i = 1; i < n && i < out.length - 1; i++) {
+      out[i][0] = b[i][0];
+      out[i][1] = b[i][1];
+    }
+  }
+  out[0] = [target[0], target[1]];
+  return out;
+}
+
+function walkInkToward(y0, x0, ty, tx, mask, brightness, w, h, maxSteps) {
+  const path = [];
+  let y = y0, x = x0;
+  const seen = new Uint8Array(w * h);
+  const startIdx = Math.round(y0) * w + Math.round(x0);
+  if (startIdx >= 0 && startIdx < seen.length) seen[startIdx] = 1;
+  for (let s = 0; s < maxSteps; s++) {
+    const dist = Math.hypot(y - ty, x - tx);
+    if (dist < 2.4) {
+      path.push([ty, tx]);
+      break;
+    }
+    let best = null, bestScore = 1e18;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const ny = Math.round(y + dy), nx = Math.round(x + dx);
+        if (ny < 1 || nx < 1 || ny >= h - 1 || nx >= w - 1) continue;
+        const idx = ny * w + nx;
+        if (seen[idx]) continue;
+        const onInk = mask && mask[idx];
+        const br = brightness ? brightness[idx] : 0;
+        if (!onInk && br < 0.16) continue;
+        const nd = Math.hypot(ny - ty, nx - tx);
+        if (nd > dist + 1.15) continue;
+        const score = nd - (onInk ? 1.4 : 0) - br * 0.9;
+        if (score < bestScore) {
+          bestScore = score;
+          best = [ny, nx];
+        }
+      }
+    }
+    if (!best) break;
+    seen[best[0] * w + best[1]] = 1;
+    path.push(best);
+    y = best[0];
+    x = best[1];
+  }
+  return path;
+}
+
+function attachEndToPoint(child, end, target, walkSteps) {
+  const c = end === 1 ? child.slice().reverse() : child.map(p => p.slice());
+  const walk = walkInkToward(
+    c[0][0], c[0][1], target[0], target[1],
+    S.mask, S.brightness, S.imgW, S.imgH, walkSteps
+  );
+  const out = [[target[0], target[1]]];
+  for (let i = walk.length - 1; i >= 0; i--) {
+    const q = walk[i];
+    const last = out[out.length - 1];
+    if (Math.hypot(q[0] - last[0], q[1] - last[1]) > 0.45) out.push(q);
+  }
+  for (let i = 0; i < c.length; i++) {
+    const q = c[i];
+    const last = out[out.length - 1];
+    if (Math.hypot(q[0] - last[0], q[1] - last[1]) > 0.45) out.push(q.slice());
+  }
+  return snapRootToPoint(out, target);
+}
+
+function pickBranchAttach(child, parents, maxGraft, force) {
+  let best = null;
+  for (const end of [0, 1]) {
+    const pt = end === 0 ? child[0] : child[child.length - 1];
+    const inward = getEndDirection(child, end);
+    for (let j = 0; j < parents.length; j++) {
+      const hit = nearestOnPolyline(pt, parents[j]);
+      if (hit.d > maxGraft) continue;
+      const vx = hit.p[1] - pt[1], vy = hit.p[0] - pt[0];
+      const vm = Math.hypot(vx, vy) || 1;
+      const align = (vx * inward[0] + vy * inward[1]) / vm;
+      if (!force && align < -0.55 && hit.t > 0.88) continue;
+      const tipPen = (hit.t > 0.93 || hit.t < 0.03) ? 10 : 0;
+      const foldPen = align < 0 ? 14 * (0.2 - align) : 0;
+      const score = hit.d + tipPen + foldPen;
+      if (!best || score < best.score) best = { end, hit, j, score, align };
+    }
+  }
+  return best;
+}
+
+// 分叉从对应主枝或根系接出：沿原图光走，不把两条拼成折线
+function graftCurvesToRootSystem(curves, w, h) {
+  if (!curves || curves.length < 2) return curves || [];
+  const cfg = getBranchAttach();
+  if (cfg.t < 0.03) return curves;
+  let minX = 1e9, maxX = -1e9, maxY = -1e9;
+  for (const c of curves) {
+    for (const p of c) {
+      if (p[0] > maxY) maxY = p[0];
+      if (p[1] < minX) minX = p[1];
+      if (p[1] > maxX) maxX = p[1];
+    }
+  }
+  const p = getParams();
+  const rx = (minX + maxX) / 2 * 0.72 + w * 0.14;
+  const ry = maxY * 0.78 + h * (p.centerYRatio || 0.65) * 0.22;
+  const clusterR = Math.max(14, Math.round(Math.min(w, h) * 0.048));
+  const cs = curves.map(c => c.map(q => q.slice())).filter(c => c && c.length >= 4);
+  const order = cs.map((_, i) => i).sort((a, b) => polylineArcLen(cs[b]) - polylineArcLen(cs[a]));
+  const grafted = new Uint8Array(cs.length);
+  let nGraft = 0, nRoot = 0;
+
+  for (let k = 1; k < order.length; k++) {
+    const i = order[k];
+    const parents = [];
+    for (let m = 0; m < k; m++) parents.push(cs[order[m]]);
+    const best = pickBranchAttach(cs[i], parents, cfg.maxGraft, cfg.force);
+    if (!best) continue;
+    cs[i] = attachEndToPoint(cs[i], best.end, best.hit.p, cfg.walkSteps);
+    grafted[i] = 1;
+    nGraft++;
+  }
+
+  if (cfg.t >= 0.45) {
+    for (let k = 1; k < order.length; k++) {
+      const i = order[k];
+      if (grafted[i]) continue;
+      const others = [];
+      for (let m = 0; m < cs.length; m++) if (m !== i) others.push(cs[m]);
+      const best = pickBranchAttach(cs[i], others, cfg.maxGraft, cfg.force);
+      if (best) {
+        cs[i] = attachEndToPoint(cs[i], best.end, best.hit.p, cfg.walkSteps);
+        grafted[i] = 1;
+        nGraft++;
+        continue;
+      }
+      const a = cs[i][0], b = cs[i][cs[i].length - 1];
+      const da = Math.hypot(a[0] - ry, a[1] - rx);
+      const db = Math.hypot(b[0] - ry, b[1] - rx);
+      const end = da <= db ? 0 : 1;
+      const pt = end === 0 ? a : b;
+      if (Math.hypot(pt[0] - ry, pt[1] - rx) <= clusterR * 2.2) {
+        cs[i] = attachEndToPoint(cs[i], end, [ry, rx], Math.round(cfg.walkSteps * 0.6));
+        nRoot++;
+      }
+    }
+  }
+  console.log(`[Graft] t=${cfg.t.toFixed(2)} branches=${nGraft} root=${nRoot} r=${cfg.maxGraft}`);
+  return cs;
 }
 
 
@@ -4758,8 +4978,9 @@ function extractCurvesOrientationField(imageData, w, h, brightness, mask, minBri
   ribbons = ribbons.map(c => stripHighFreqZigzag(openFalseLoop(c))).filter(c => c && c.length >= (S._keepMin || 24));
   const useV2 = !(document.getElementById('connectV2')) || document.getElementById('connectV2').checked;
   const connected = useV2 ? connectShortSegmentsV2(ribbons, w, h) : connectShortSegments(ribbons, w, h);
-  console.log(`[OF Trace] 光带主干 ${curves.length} -> ${connected.length}`);
-  return connected;
+  const grafted = graftCurvesToRootSystem(connected, w, h);
+  console.log(`[OF Trace] 光带主干 ${curves.length} -> ${grafted.length}`);
+  return grafted;
 }
 
 function stripHighFreqZigzag(pts) {
@@ -5994,7 +6215,7 @@ function exportJSON() {
   if (!S.smoothedCurves.length) { setStatus('无曲线可导出'); return; }
   if (!S.cardMeshes) try { buildAllCardMeshes(); } catch (e) { console.error(e); }
   const data = {
-    version: 'v1.4.22',
+    version: 'v1.4.24',
     tool: 'Curve Extractor',
     imgW: S.imgW,
     imgH: S.imgH,
@@ -6329,6 +6550,7 @@ document.getElementById('canvasCurves').addEventListener('click', e => {
 // 精细模式：一键设置适合精细光效图的参数
 document.getElementById('btnFineMode').addEventListener('click', () => {
   document.getElementById('branchDetail').value = 75;
+  document.getElementById('branchAttach').value = 80;
   document.getElementById('closeRadius').value = 4;
   document.getElementById('dilateRadius').value = 1;
   document.getElementById('minObjectSize').value = 200;
@@ -6350,7 +6572,7 @@ document.getElementById('btnDemo').addEventListener('click', () => {
 });
 
 // 参数滑条实时更新标签
-['hueMin','hueMax','satMin','valMin','brightThresh','closeRadius','dilateRadius','minObjectSize','pruneLength','rootYRatio','centerYRatio','minLength','rdpEpsilon','numSamples','branchDetail'].forEach(id => {
+['hueMin','hueMax','satMin','valMin','brightThresh','closeRadius','dilateRadius','minObjectSize','pruneLength','rootYRatio','centerYRatio','minLength','rdpEpsilon','numSamples','branchDetail','branchAttach'].forEach(id => {
   document.getElementById(id).addEventListener('input', updateParamLabels);
 });
 

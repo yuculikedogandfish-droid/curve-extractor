@@ -2,10 +2,10 @@
 
 > **当前开发分支**：`dev`（日常提交都推这里）  
 > **当前线上**：`master` → GitHub Pages  
-> **当前版本**：v1.4.22  
+> **当前版本**：v1.4.24  
 > **线上地址**：https://yuculikedogandfish-droid.github.io/curve-extractor/app.html  
 > **仓库**：https://github.com/yuculikedogandfish-droid/curve-extractor  
-> **更新日期**：2026-09-05
+> **更新日期**：2026-09-13
 
 本文给后续 Agent 和同事用：先看「怎么开发 / 怎么回滚」，再按下表对版本。详细模块说明见 [HANDOFF.md](./HANDOFF.md)。
 
@@ -92,7 +92,8 @@ python input/tri_labeled/debug/verify_overlay.py
 | **v1.4.18** | `83d074b` | 侧视 Z 沿墨水连续走，交叉口不再出台阶 | 侧视贴墨约 98% |
 | **v1.4.19** | `d624bf5` | 墨水包围盒对齐 +「信顶面」滑条 | 可回滚 |
 | **v1.4.20** | `b45ae30` | 非标准三视图先校正；正视为准；空间曲线平滑 | 可回滚 |
-| **v1.4.22** | `021f9f6` | **当前**：光效图主干不折返；枝条精细度可调 | **线上目标** |
+| **v1.4.22** | `021f9f6` | 光效图主干不折返；枝条精细度可调 | 可回滚 |
+| **v1.4.24** | `2e50c5a` | **当前**：分叉沿原图接到主枝/根系；「分叉着生」可调 | **线上目标** |
 
 ---
 
@@ -187,10 +188,15 @@ Z 取侧面骨架最长路径，让侧视黄线落在侧面墨水上。
 - JSON 导出含 `points3d` / `points3d_yup`，给配套 Blender 插件导入。
 - Blender 插件源码在 `blender_addon/curve_extractor/`。
 
-### v1.4.22 `021f9f6`（当前）
+### v1.4.22 `021f9f6`
 - **光效图**：沿主干惯性走，细丝并成枝条，去掉短折返；单图深度不再加正弦假抖动（侧视/俯视不再一折一折）。
 - **枝条精细度**滑条（0–100）：少=只要主干，多=短枝和方向略偏的长枝。改完再点「提取曲线」。精细模式≈75%。
 - 3D「一级/二级/三级」只是显示开关，不会多抽出枝条。
+
+### v1.4.24 `2e50c5a`（当前）
+- **分叉着生**：短枝接到最近主枝或根系，沿原图光带走过去，**不把两根拼成折线**。
+- 滑条「分叉着生」（0–100，默认 70%）：少=允许悬空，多=贴主枝/根系。接错枝就往左拉，仍悬空就往右拉。
+- 「枝条精细度」仍只管抽出多少根。
 
 ---
 
@@ -201,10 +207,11 @@ Z 取侧面骨架最长路径，让侧视黄线落在侧面墨水上。
 3. **精细模式 / 背景容差**：对白线黑底线稿几乎无用；那是给杂色底光效图的。
 4. **面片无贴图**：UV 有，贴图在 UE 里做。
 5. **HANDOFF.md 里旧的行号会漂**：以函数名为准，用 Grep。
+6. **分叉着生接错枝**：滑条太高时可能贴到邻近的另一根主枝。往左拉再提取。
 
 ---
 
-## 关键代码入口（v1.4.22）
+## 关键代码入口（v1.4.24）
 
 | 主题 | 函数 / 状态 |
 |------|-------------|
@@ -213,6 +220,7 @@ Z 取侧面骨架最长路径，让侧视黄线落在侧面墨水上。
 | 线稿追踪 | `extractCurvesOrientationField()` → `traceOrientationField()`（惯性 + 前瞻） |
 | 点选补笔 | `pickStrokeAt()`、`#btnPickStroke` |
 | 枝条精细度 | `getBranchDetail()`、`#branchDetail` |
+| 分叉着生 | `getBranchAttach()`、`graftCurvesToRootSystem()`、`#branchAttach` |
 | 三视图深度 | `processTriViews()`、`reconstructTriView()`、`S.triTrustTop`、`S.triAlignInk`、`rectifyTriViewsToOrtho()` |
 | 3D 与导出同源 | `buildCurveWorldPoints()` |
 | 正交对照 | `drawOrthoBlueprint()`，`S.view3d.preset` = front/side/top |

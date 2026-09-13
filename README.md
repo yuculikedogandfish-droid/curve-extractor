@@ -67,6 +67,6 @@ git checkout master && git merge dev && git push origin master
 
 ## 当前版本
 
-**v1.4.22** — 光效图提主干不折返；「枝条精细度」可调短枝/分叉多少。三视图仍可先校正。JSON 给 Blender 插件。
+**v1.4.24** — 分叉沿原图接到主枝或根系；「分叉着生」可调松紧。「枝条精细度」管抽出多少根。JSON 给 Blender 插件。
 
-回滚：`git checkout v1.4.20 -- app.html`（tag 一览见 VERSIONS.md）。
+回滚：`git checkout v1.4.22 -- app.html`（tag 一览见 VERSIONS.md）。
