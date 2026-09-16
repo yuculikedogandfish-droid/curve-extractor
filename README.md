@@ -67,6 +67,6 @@ git checkout master && git merge dev && git push origin master
 
 ## 当前版本
 
-**v1.4.24** — 分叉沿原图接到主枝或根系；「分叉着生」可调松紧。「枝条精细度」管抽出多少根。JSON 给 Blender 插件。
+**v1.4.25** — 「走势轴向」可调横向连续 / 竖向根系；色组按原图颜色，不按粗细。JSON 给 Blender 插件。
 
-回滚：`git checkout v1.4.22 -- app.html`（tag 一览见 VERSIONS.md）。
+回滚：`git checkout v1.4.24 -- app.html`（tag 一览见 VERSIONS.md）。
