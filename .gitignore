@@ -49,3 +49,6 @@ archive/
 release/*.zip
 release/html/CurveExtractor.html
 
+# Local web-vs-DCC overlays and production plates (do not publish)
+release/preview/
+

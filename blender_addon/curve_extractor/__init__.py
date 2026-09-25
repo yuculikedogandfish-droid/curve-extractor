@@ -27,6 +27,8 @@ from mathutils import Vector
 
 from . import core
 
+_LAST = {"result": None, "path": None}
+
 
 def _safe_name(name):
     cleaned = "".join(c if c.isalnum() or c in "._-" else "_" for c in str(name))
@@ -64,7 +66,7 @@ def _mesh_from_sheet(name, verts, faces, uvs):
 
 
 def _params_from_scene(props):
-    return core.ExtractParams(
+    p = core.ExtractParams(
         bright_thresh=props.bright_thresh,
         hue_min=props.hue_min,
         hue_max=props.hue_max,
@@ -73,7 +75,15 @@ def _params_from_scene(props):
         branch_attach=props.branch_attach,
         growth_axis=props.growth_axis,
         min_length=props.min_length,
+        bg_enabled=props.bg_enabled,
+        bg_tol=props.bg_tol,
+        auto_invert=props.auto_invert,
+        trust_top=props.trust_top / 100.0,
+        tri_rectify=props.tri_rectify,
     )
+    if props.fine_mode:
+        p = core.apply_fine_mode(p)
+    return p
 
 
 def _card_from_scene(props):
@@ -148,6 +158,8 @@ class CURVEEXT_OT_extract_image(bpy.types.Operator, ImportHelper):
             return {"CANCELLED"}
         try:
             result = core.extract_from_rgb(rgb, _params_from_scene(props), _card_from_scene(props))
+            _LAST["result"] = result
+            _LAST["path"] = path
         except Exception as e:
             self.report({"ERROR"}, "提取失败: %s" % e)
             return {"CANCELLED"}
@@ -273,6 +285,144 @@ class CURVEEXT_OT_cards_from_selected(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class CURVEEXT_OT_extract_tri(bpy.types.Operator, ImportHelper):
+    bl_idname = "curve_extractor.extract_tri"
+    bl_label = "三视图提取（先选正面图）"
+    bl_description = "正面 + 侧栏里的侧面/顶面路径。与网页三视图同一套：校正、信顶面、正视为准"
+    bl_options = {"REGISTER", "UNDO"}
+    filename_ext = ""
+    filter_glob: StringProperty(default="*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.bmp", options={"HIDDEN"})
+
+    def execute(self, context):
+        props = context.scene.curve_extractor
+        try:
+            front = core.load_rgb_u8(self.filepath)
+            side = core.load_rgb_u8(props.side_path) if props.side_path else None
+            top = core.load_rgb_u8(props.top_path) if props.top_path else None
+            result = core.extract_from_rgb(
+                front, _params_from_scene(props), _card_from_scene(props),
+                side_rgb=side, top_rgb=top, trust_top=props.trust_top / 100.0,
+                tri_rectify=props.tri_rectify,
+            )
+        except Exception as e:
+            self.report({"ERROR"}, "三视图提取失败: %s" % e)
+            return {"CANCELLED"}
+        if not result.curves:
+            self.report({"WARNING"}, "没有提出曲线")
+            return {"CANCELLED"}
+        _LAST["result"] = result
+        _LAST["path"] = self.filepath
+        c, m = _spawn_result(context, result, props.scale, props.z_up, True, props.make_cards)
+        self.report({"INFO"}, "三视图 %d 条、%d 张面片（信顶面 %d%%）" % (c, m, int(props.trust_top)))
+        return {"FINISHED"}
+
+
+class CURVEEXT_OT_pick_stroke(bpy.types.Operator):
+    bl_idname = "curve_extractor.pick_stroke"
+    bl_label = "点选补一笔"
+    bl_description = "与网页相同：在已提取结果上按像素坐标补一笔。可先在图像编辑器打开原图，光标即像素位置"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        props = context.scene.curve_extractor
+        result = _LAST.get("result")
+        if result is None or not result.of_cache:
+            self.report({"ERROR"}, "请先提取曲线")
+            return {"CANCELLED"}
+        x, y = props.pick_x, props.pick_y
+        for area in context.screen.areas:
+            if area.type == "IMAGE_EDITOR" and area.spaces.active.image:
+                space = area.spaces.active
+                if space.cursor_location is not None and space.image.size[0]:
+                    x = float(space.cursor_location[0])
+                    y = float(space.image.size[1] - space.cursor_location[1])
+        try:
+            core.pick_stroke(result, x, y)
+        except Exception as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        _LAST["result"] = result
+        c, m = _spawn_result(context, result, props.scale, props.z_up, True, props.make_cards)
+        self.report({"INFO"}, "已补一笔，现在 %d 条" % c)
+        return {"FINISHED"}
+
+
+class CURVEEXT_OT_export_fbx(bpy.types.Operator, ExportHelper):
+    bl_idname = "curve_extractor.export_fbx"
+    bl_label = "导出面片 FBX（给 UE）"
+    filename_ext = ".fbx"
+    filter_glob: StringProperty(default="*.fbx", options={"HIDDEN"})
+
+    def execute(self, context):
+        result = _LAST.get("result")
+        if not result or not result.curves:
+            self.report({"ERROR"}, "请先提取")
+            return {"CANCELLED"}
+        core.export_card_fbx(result, self.filepath, scale=context.scene.curve_extractor.scale)
+        self.report({"INFO"}, "已导出 FBX")
+        return {"FINISHED"}
+
+
+class CURVEEXT_OT_export_svg(bpy.types.Operator, ExportHelper):
+    bl_idname = "curve_extractor.export_svg"
+    bl_label = "导出 SVG"
+    filename_ext = ".svg"
+    filter_glob: StringProperty(default="*.svg", options={"HIDDEN"})
+
+    def execute(self, context):
+        result = _LAST.get("result")
+        if not result:
+            self.report({"ERROR"}, "请先提取")
+            return {"CANCELLED"}
+        core.export_svg(result, self.filepath)
+        return {"FINISHED"}
+
+
+class CURVEEXT_OT_export_dxf(bpy.types.Operator, ExportHelper):
+    bl_idname = "curve_extractor.export_dxf"
+    bl_label = "导出 DXF"
+    filename_ext = ".dxf"
+    filter_glob: StringProperty(default="*.dxf", options={"HIDDEN"})
+
+    def execute(self, context):
+        result = _LAST.get("result")
+        if not result:
+            self.report({"ERROR"}, "请先提取")
+            return {"CANCELLED"}
+        core.export_dxf(result, self.filepath)
+        return {"FINISHED"}
+
+
+class CURVEEXT_OT_export_obj(bpy.types.Operator, ExportHelper):
+    bl_idname = "curve_extractor.export_obj"
+    bl_label = "导出面片 OBJ"
+    filename_ext = ".obj"
+    filter_glob: StringProperty(default="*.obj", options={"HIDDEN"})
+
+    def execute(self, context):
+        result = _LAST.get("result")
+        if not result:
+            self.report({"ERROR"}, "请先提取")
+            return {"CANCELLED"}
+        core.export_obj_cards(result, self.filepath, scale=context.scene.curve_extractor.scale)
+        return {"FINISHED"}
+
+
+class CURVEEXT_OT_export_obj_lines(bpy.types.Operator, ExportHelper):
+    bl_idname = "curve_extractor.export_obj_lines"
+    bl_label = "导出线条 OBJ"
+    filename_ext = ".obj"
+    filter_glob: StringProperty(default="*.obj", options={"HIDDEN"})
+
+    def execute(self, context):
+        result = _LAST.get("result")
+        if not result:
+            self.report({"ERROR"}, "请先提取")
+            return {"CANCELLED"}
+        core.export_obj_lines(result, self.filepath)
+        return {"FINISHED"}
+
+
 class CURVEEXT_Props(bpy.types.PropertyGroup):
     scale: FloatProperty(name="像素缩放", default=0.01, min=0.0001, max=10.0,
                          description="约 1024 像素 = 10.24 米")
@@ -291,6 +441,18 @@ class CURVEEXT_Props(bpy.types.PropertyGroup):
     growth_axis: FloatProperty(name="走势轴向", default=50.0, min=0.0, max=100.0,
                                description="左=横向连续，右=竖向根系，中=按长宽自动")
     min_length: IntProperty(name="最短曲线", default=30, min=10, max=300)
+    bg_enabled: BoolProperty(name="自动去背景", default=True)
+    bg_tol: FloatProperty(name="背景容差", default=60.0, min=5.0, max=180.0)
+    auto_invert: BoolProperty(name="浅色背景自动反色", default=True)
+    fine_mode: BoolProperty(name="精细模式（光效）", default=False,
+                            description="与网页「精细模式」同一套：精细度75 / 着生80")
+    side_path: StringProperty(name="侧面图", default="", subtype="FILE_PATH")
+    top_path: StringProperty(name="顶面图", default="", subtype="FILE_PATH")
+    trust_top: FloatProperty(name="信顶面", default=0.0, min=0.0, max=100.0,
+                             description="0=侧视准，100=俯视准。与网页滑条相同")
+    tri_rectify: BoolProperty(name="提取前校正标准三视图", default=True)
+    pick_x: FloatProperty(name="补笔 X（像素）", default=0.0)
+    pick_y: FloatProperty(name="补笔 Y（像素，从上往下）", default=0.0)
 
 
 class CURVEEXT_PT_panel(bpy.types.Panel):
@@ -306,14 +468,40 @@ class CURVEEXT_PT_panel(bpy.types.Panel):
         box = layout.box()
         box.label(text="内部工具 · 勿外传")
         layout.operator("curve_extractor.extract_image", icon="IMAGE_DATA")
+        box = layout.box()
+        box.label(text="三视图（与网页相同）")
+        box.prop(props, "side_path")
+        box.prop(props, "top_path")
+        box.prop(props, "trust_top")
+        box.prop(props, "tri_rectify")
+        box.operator("curve_extractor.extract_tri", icon="OUTLINER_OB_CAMERA")
+        layout.separator()
+        layout.label(text="点选补一笔")
+        layout.prop(props, "pick_x")
+        layout.prop(props, "pick_y")
+        layout.operator("curve_extractor.pick_stroke", icon="EYEDROPPER")
+        layout.separator()
         layout.operator("curve_extractor.import_json", icon="IMPORT")
         layout.operator("curve_extractor.export_json", icon="EXPORT")
+        layout.operator("curve_extractor.export_fbx", icon="EXPORT")
+        layout.operator("curve_extractor.export_obj", icon="EXPORT")
+        layout.operator("curve_extractor.export_obj_lines", icon="EXPORT")
+        layout.operator("curve_extractor.export_svg", icon="EXPORT")
+        layout.operator("curve_extractor.export_dxf", icon="EXPORT")
         layout.separator()
-        layout.label(text="提取")
+        layout.label(text="提取（与网页同一套参数）")
+        layout.prop(props, "fine_mode")
+        layout.prop(props, "bg_enabled")
+        layout.prop(props, "bg_tol")
+        layout.prop(props, "auto_invert")
         layout.prop(props, "bright_thresh")
+        layout.prop(props, "hue_min")
+        layout.prop(props, "hue_max")
+        layout.prop(props, "sat_min")
         layout.prop(props, "branch_detail")
         layout.prop(props, "branch_attach")
         layout.prop(props, "growth_axis")
+        layout.prop(props, "min_length")
         layout.separator()
         layout.label(text="场景 / 面片")
         layout.prop(props, "scale")
@@ -329,8 +517,15 @@ class CURVEEXT_PT_panel(bpy.types.Panel):
 classes = (
     CURVEEXT_Props,
     CURVEEXT_OT_extract_image,
+    CURVEEXT_OT_extract_tri,
+    CURVEEXT_OT_pick_stroke,
     CURVEEXT_OT_import_json,
     CURVEEXT_OT_export_json,
+    CURVEEXT_OT_export_fbx,
+    CURVEEXT_OT_export_obj,
+    CURVEEXT_OT_export_obj_lines,
+    CURVEEXT_OT_export_svg,
+    CURVEEXT_OT_export_dxf,
     CURVEEXT_OT_cards_from_selected,
     CURVEEXT_PT_panel,
 )

@@ -206,11 +206,13 @@ Z 取侧面骨架最长路径，让侧视黄线落在侧面墨水上。
 
 ### v1.4.26 DCC 独立包（发给特效师，不进 Pages）
 - **目的**：特效师只在 Blender / Houdini 本机用，避免把制作图传到公开网页。
-- **算法**：单图方向场，对齐网页 v1.4.25（精细度 / 着生 / 轴向 / 色组）。三视图仍只在内部 `app.html`。
+- **算法**：与网页 v1.4.25 同一套核（方向场、去背景、精细模式、走势轴向、色组、三视图校正+信顶面+线稿侧/顶匹配、点选补一笔）。
+- **导出**：JSON / 面片 FBX / 面片 OBJ / 线条 OBJ / SVG / DXF，格式对齐网页。
 - **共用核**：`dcc_shared/core.py`，打包时复制进两个插件，不要只改其中一份。
 - **同事包（gitignore）**：
   - `release/CurveExtractor-v1.4.26-Blender.zip`
   - `release/CurveExtractor-v1.4.26-Houdini.zip`
+- **量产图对照**：`release/preview/compare_production_web_vs_dcc.png`（8 根对 8 根）。
 - **不要**把插件 zip、`dcc_shared` 源码或测试图推到公开仓库。
 
 ---

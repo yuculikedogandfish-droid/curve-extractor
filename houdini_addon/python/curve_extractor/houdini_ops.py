@@ -9,6 +9,8 @@ import numpy as np
 
 from . import core
 
+_LAST = {"result": None, "scale": 0.01}
+
 
 def _ask_file(title, pattern, multiple=False):
     import hou
@@ -109,8 +111,13 @@ def _params_from_dialog():
             "像素缩放",
             "面片数量 1-4",
             "面片半宽(像素)",
+            "精细模式 0/1（与网页同一套）",
+            "自动去背景 0/1",
+            "色相最小",
+            "色相最大",
+            "饱和度下限",
         ),
-        initial_contents=("0.70", "40", "70", "50", "0.01", "2", "24"),
+        initial_contents=("0.70", "40", "70", "50", "0.01", "2", "24", "0", "1", "0.05", "0.17", "0.25"),
         buttons=buttons,
         default_choice=0,
         close_choice=1,
@@ -123,7 +130,13 @@ def _params_from_dialog():
         branch_detail=float(vals[1]),
         branch_attach=float(vals[2]),
         growth_axis=float(vals[3]),
+        bg_enabled=float(vals[8]) >= 0.5,
+        hue_min=float(vals[9]) if len(vals) > 9 else 0.05,
+        hue_max=float(vals[10]) if len(vals) > 10 else 0.17,
+        sat_min=float(vals[11]) if len(vals) > 11 else 0.25,
     )
+    if float(vals[7]) >= 0.5:
+        params = core.apply_fine_mode(params)
     card = core.CardParams(count=int(float(vals[5])), width=float(vals[6]))
     scale = float(vals[4])
     return params, card, scale
@@ -153,6 +166,8 @@ def extract_from_image_dialog():
     if not result.curves:
         hou.ui.displayMessage("没有提出曲线。可提高枝条精细度或降低亮度阈值。")
         return
+    _LAST["result"] = result
+    _LAST["scale"] = scale
     name = "ce_" + os.path.splitext(os.path.basename(path))[0]
     obj = _create_geo(name)
     _inject_geometry(obj, result, scale, True)
@@ -287,3 +302,142 @@ def export_selected_json():
         return
     core.save_json_file(result, path)
     hou.ui.displayMessage("已导出 %d 条到\n%s" % (len(result.curves), path))
+
+
+def extract_tri_dialog():
+    import hou
+
+    front = _ask_file("正面图", "*.png *.jpg *.jpeg *.tif *.tiff *.bmp")
+    if not front:
+        return
+    side = _ask_file("侧面图（可取消）", "*.png *.jpg *.jpeg *.tif *.tiff *.bmp")
+    top = _ask_file("顶面图（可取消）", "*.png *.jpg *.jpeg *.tif *.tiff *.bmp")
+    parsed = _params_from_dialog()
+    if parsed is None:
+        return
+    params, card, scale = parsed
+    trust = hou.ui.readInput("信顶面 0-100", buttons=("确定", "取消"), initial_contents="0")
+    if trust[0] != 0:
+        return
+    params.trust_top = float(trust[1]) / 100.0
+    try:
+        result = core.extract_from_path(
+            front, params, card,
+            side_path=side if side and os.path.isfile(side) else None,
+            top_path=top if top and os.path.isfile(top) else None,
+        )
+    except Exception as e:
+        hou.ui.displayMessage("三视图失败：%s" % e, severity=hou.severityType.Error)
+        return
+    _LAST["result"] = result
+    _LAST["scale"] = scale
+    obj = _create_geo("ce_tri")
+    _inject_geometry(obj, result, scale, True)
+    hou.ui.displayMessage("三视图 %d 条 → /obj/%s" % (len(result.curves), obj.name()))
+
+
+def pick_stroke_dialog():
+    import hou
+
+    result = _LAST.get("result")
+    if not result or not result.of_cache:
+        hou.ui.displayMessage("请先提取曲线")
+        return
+    xy = hou.ui.readInput("补笔像素 X,Y（图像坐标，Y从上往下）", buttons=("确定", "取消"), initial_contents="100,100")
+    if xy[0] != 0:
+        return
+    try:
+        xs, ys = xy[1].replace("，", ",").split(",")
+        core.pick_stroke(result, float(xs), float(ys))
+    except Exception as e:
+        hou.ui.displayMessage(str(e), severity=hou.severityType.Error)
+        return
+    _LAST["result"] = result
+    obj = _create_geo("ce_pick")
+    _inject_geometry(obj, result, _LAST.get("scale") or 0.01, True)
+    hou.ui.displayMessage("已补一笔，现在 %d 条" % len(result.curves))
+
+
+def export_fbx_dialog():
+    import hou
+
+    result = _LAST.get("result")
+    if not result:
+        hou.ui.displayMessage("请先提取")
+        return
+    path = hou.ui.selectFile(title="导出面片 FBX", pattern="*.fbx", chooser_mode=hou.fileChooserMode.Write)
+    if not path:
+        return
+    path = hou.expandString(path)
+    if not path.lower().endswith(".fbx"):
+        path += ".fbx"
+    core.export_card_fbx(result, path, scale=_LAST.get("scale") or 0.01)
+    hou.ui.displayMessage("已导出 " + path)
+
+
+def export_obj_dialog():
+    import hou
+
+    result = _LAST.get("result")
+    if not result:
+        hou.ui.displayMessage("请先提取")
+        return
+    path = hou.ui.selectFile(title="导出面片 OBJ", pattern="*.obj", chooser_mode=hou.fileChooserMode.Write)
+    if not path:
+        return
+    path = hou.expandString(path)
+    if not path.lower().endswith(".obj"):
+        path += ".obj"
+    core.export_obj_cards(result, path, scale=_LAST.get("scale") or 0.01)
+    hou.ui.displayMessage("已导出 " + path)
+
+
+def export_svg_dialog():
+    import hou
+
+    result = _LAST.get("result")
+    if not result:
+        hou.ui.displayMessage("请先提取")
+        return
+    path = hou.ui.selectFile(title="导出 SVG", pattern="*.svg", chooser_mode=hou.fileChooserMode.Write)
+    if not path:
+        return
+    path = hou.expandString(path)
+    if not path.lower().endswith(".svg"):
+        path += ".svg"
+    core.export_svg(result, path)
+    hou.ui.displayMessage("已导出 " + path)
+
+
+def export_dxf_dialog():
+    import hou
+
+    result = _LAST.get("result")
+    if not result:
+        hou.ui.displayMessage("请先提取")
+        return
+    path = hou.ui.selectFile(title="导出 DXF", pattern="*.dxf", chooser_mode=hou.fileChooserMode.Write)
+    if not path:
+        return
+    path = hou.expandString(path)
+    if not path.lower().endswith(".dxf"):
+        path += ".dxf"
+    core.export_dxf(result, path)
+    hou.ui.displayMessage("已导出 " + path)
+
+
+def export_obj_lines_dialog():
+    import hou
+
+    result = _LAST.get("result")
+    if not result:
+        hou.ui.displayMessage("请先提取")
+        return
+    path = hou.ui.selectFile(title="导出线条 OBJ", pattern="*.obj", chooser_mode=hou.fileChooserMode.Write)
+    if not path:
+        return
+    path = hou.expandString(path)
+    if not path.lower().endswith(".obj"):
+        path += ".obj"
+    core.export_obj_lines(result, path)
+    hou.ui.displayMessage("已导出 " + path)

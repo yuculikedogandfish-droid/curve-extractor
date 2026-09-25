@@ -36,7 +36,15 @@ class ExtractParams:
     root_y_ratio: float = 0.72
     center_y_ratio: float = 0.65
     invert_mask: bool = False
+    auto_invert: bool = True
     line_enhance: bool = True
+    bg_enabled: bool = True
+    bg_tol: float = 60.0
+    prune_length: int = 13
+    apply_auto_adapt: bool = True
+    trust_top: float = 0.0
+    tri_rectify: bool = True
+    tri_align_ink: bool = True
 
 
 @dataclass
@@ -65,6 +73,7 @@ class ExtractResult:
     line_drawing: bool = False
     curves: List[ExtractedCurve] = field(default_factory=list)
     card: CardParams = field(default_factory=CardParams)
+    of_cache: Any = field(default=None, repr=False)
 
     def to_json_dict(self) -> Dict[str, Any]:
         return {
@@ -221,6 +230,88 @@ def rgb2hsv(r: np.ndarray, g: np.ndarray, b: np.ndarray):
     return h, s, mx
 
 
+def apply_fine_mode(p: ExtractParams) -> ExtractParams:
+    """Same preset as the HTML「精细模式」button."""
+    q = ExtractParams(**asdict(p))
+    q.branch_detail = 75
+    q.branch_attach = 80
+    q.close_radius = 4
+    q.dilate_radius = 1
+    q.min_object_size = 200
+    q.prune_length = 12
+    q.min_length = 40
+    q.bright_layer = 0.32
+    q.rdp_epsilon = 7
+    return q
+
+
+def detect_invert_mask(rgb: np.ndarray) -> bool:
+    val = rgb.max(axis=2).astype(np.float64) / 255.0
+    return float(val.mean()) > 0.5
+
+
+def _color_dist(r1, g1, b1, r2, g2, b2) -> float:
+    rm = (r1 + r2) / 2.0
+    dr, dg, db = r1 - r2, g1 - g2, b1 - b2
+    return math.sqrt((2 + rm / 256.0) * dr * dr + 4 * dg * dg + (2 + (255 - rm) / 256.0) * db * db)
+
+
+def estimate_background_color(rgb: np.ndarray):
+    h, w = rgb.shape[:2]
+    step = max(1, int(round(min(w, h) / 200)))
+    samples = []
+    samples.extend(rgb[0, ::step].tolist())
+    samples.extend(rgb[h - 1, ::step].tolist())
+    samples.extend(rgb[::step, 0].tolist())
+    samples.extend(rgb[::step, w - 1].tolist())
+    arr = np.asarray(samples, dtype=np.float64)
+    return [float(np.median(arr[:, 0])), float(np.median(arr[:, 1])), float(np.median(arr[:, 2]))]
+
+
+def build_background_mask(rgb: np.ndarray, p: ExtractParams) -> np.ndarray:
+    h, w = rgb.shape[:2]
+    br, bg, bb = estimate_background_color(rgb)
+    bg_val = max(br, bg, bb) / 255.0
+    tol = p.bg_tol
+    local_tol = tol * 0.5
+    hue, sat, val = rgb2hsv(rgb[..., 0] / 255.0, rgb[..., 1] / 255.0, rgb[..., 2] / 255.0)
+    golden = (hue >= p.hue_min) & (hue <= p.hue_max) & (sat >= p.sat_min) & (val >= p.val_min)
+    much_brighter = val > bg_val + 0.22
+    is_fg = golden | much_brighter
+    bg_mask = np.zeros((h, w), dtype=np.uint8)
+    queue = []
+    def seed(x, y):
+        if x < 0 or y < 0 or x >= w or y >= h:
+            return
+        if bg_mask[y, x] or is_fg[y, x]:
+            return
+        r, g, b = [float(v) for v in rgb[y, x]]
+        if _color_dist(r, g, b, br, bg, bb) <= tol:
+            bg_mask[y, x] = 1
+            queue.append((y, x))
+    for x in range(w):
+        seed(x, 0)
+        seed(x, h - 1)
+    for y in range(h):
+        seed(0, y)
+        seed(w - 1, y)
+    qh = 0
+    while qh < len(queue):
+        y, x = queue[qh]
+        qh += 1
+        cr, cg, cb = [float(v) for v in rgb[y, x]]
+        for ny, nx in ((y, x + 1), (y, x - 1), (y + 1, x), (y - 1, x)):
+            if ny < 0 or nx < 0 or ny >= h or nx >= w:
+                continue
+            if bg_mask[ny, nx] or is_fg[ny, nx]:
+                continue
+            r, g, b = [float(v) for v in rgb[ny, nx]]
+            if _color_dist(r, g, b, cr, cg, cb) <= local_tol or _color_dist(r, g, b, br, bg, bb) <= tol:
+                bg_mask[ny, nx] = 1
+                queue.append((ny, nx))
+    return bg_mask
+
+
 def detect_line_drawing(rgb: np.ndarray) -> bool:
     mx = rgb.max(axis=2)
     dark = mx < 18
@@ -351,7 +442,8 @@ def _remove_small(mask: np.ndarray, min_size: int) -> np.ndarray:
     return out
 
 
-def extract_mask(rgb: np.ndarray, p: ExtractParams, line_drawing: bool):
+def extract_mask(rgb: np.ndarray, p: ExtractParams, line_drawing: bool,
+                 bg_mask: Optional[np.ndarray] = None):
     h, w = rgb.shape[:2]
     rf = rgb[..., 0].astype(np.float64) / 255.0
     gf = rgb[..., 1].astype(np.float64) / 255.0
@@ -368,7 +460,63 @@ def extract_mask(rgb: np.ndarray, p: ExtractParams, line_drawing: bool):
         bright_m = val >= p.bright_thresh
         layer_m = val >= p.bright_layer
         mask = (((hue_m & sat_m & val_m) | bright_m) & layer_m).astype(np.uint8)
+    if p.invert_mask:
+        mask = (1 - mask).astype(np.uint8)
+    if (not line_drawing) and bg_mask is not None:
+        mask = np.where(bg_mask, 0, mask).astype(np.uint8)
     return mask, brightness
+
+
+def auto_adapt(mask: np.ndarray, p: ExtractParams, line_drawing: bool) -> ExtractParams:
+    h, w = mask.shape
+    q = ExtractParams(**asdict(p))
+    if not p.apply_auto_adapt:
+        return q
+    visited = np.zeros((h, w), dtype=np.uint8)
+    sizes = []
+    ys, xs = np.nonzero(mask)
+    for y0, x0 in zip(ys.tolist(), xs.tolist()):
+        if visited[y0, x0]:
+            continue
+        stack = [(y0, x0)]
+        visited[y0, x0] = 1
+        size = 0
+        while stack:
+            y, x = stack.pop()
+            size += 1
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if dy == 0 and dx == 0:
+                        continue
+                    ny, nx = y + dy, x + dx
+                    if 0 <= ny < h and 0 <= nx < w and mask[ny, nx] and not visited[ny, nx]:
+                        visited[ny, nx] = 1
+                        stack.append((ny, nx))
+        sizes.append(size)
+    ncomp = len(sizes)
+    scale = max(w, h) / 1000.0
+    if line_drawing:
+        q.close_radius = max(1, int(round(1 * scale)))
+        q.dilate_radius = 0
+        q.min_object_size = max(20, int(round(30 * scale)))
+        q.prune_length = max(8, int(round(10 * scale)))
+        q.rdp_epsilon = 1.5
+    elif ncomp <= 3:
+        q.close_radius = max(1, int(round(2 * scale)))
+        q.dilate_radius = 0
+        q.min_object_size = int(round(50 * scale))
+        q.prune_length = max(3, int(round(5 * scale)))
+    elif ncomp <= 15:
+        q.close_radius = max(2, int(round(3 * scale)))
+        q.dilate_radius = 0
+        q.min_object_size = int(round(80 * scale))
+        q.prune_length = max(5, int(round(8 * scale)))
+    else:
+        q.close_radius = max(3, int(round(4 * scale)))
+        q.dilate_radius = 1
+        q.min_object_size = int(round(60 * scale))
+        q.prune_length = max(5, int(round(8 * scale)))
+    return q
 
 
 def solidify(mask: np.ndarray, p: ExtractParams, line_drawing: bool) -> np.ndarray:
@@ -639,8 +787,142 @@ def bundle_overdrawn(curves: List[List[List[float]]], w: int, h: int, gap_scale:
         if len(group) == 1:
             out.append(group[0])
         else:
-            out.append(max(group, key=len))
+            out.append(_merge_stroke_bundle(group))
     return out
+
+
+def _merge_stroke_bundle(group):
+    spine = max(group, key=len)
+    r2 = 16 * 16
+    out = []
+    for i, sp in enumerate(spine):
+        sy, sx, n = sp[0], sp[1], 1
+        t = i / (len(spine) - 1) if len(spine) > 1 else 0
+        for c in group:
+            if c is spine:
+                continue
+            j0 = int(round(t * (len(c) - 1)))
+            lo, hi = max(0, j0 - 24), min(len(c) - 1, j0 + 24)
+            best, by, bx = r2 + 1, 0.0, 0.0
+            for j in range(lo, hi + 1):
+                dy = c[j][0] - spine[i][0]
+                dx = c[j][1] - spine[i][1]
+                d = dy * dy + dx * dx
+                if d < best:
+                    best, by, bx = d, c[j][0], c[j][1]
+            if best <= r2:
+                sy += by
+                sx += bx
+                n += 1
+        out.append([sy / n, sx / n])
+    return out
+
+
+def open_false_loop(pts):
+    if not pts or len(pts) < 16:
+        return pts
+    a, b = pts[0], pts[-1]
+    if math.hypot(a[0] - b[0], a[1] - b[1]) > 14:
+        return pts
+    ymin = min(p[0] for p in pts)
+    ymax = max(p[0] for p in pts)
+    xmin = min(p[1] for p in pts)
+    xmax = max(p[1] for p in pts)
+    box = max(1, xmax - xmin) + max(1, ymax - ymin)
+    if len(pts) > box * 2.2:
+        return pts[: len(pts) // 2]
+    return pts
+
+
+def _seg_intersect(a, b, c, d):
+    def cross(p, q, r):
+        return (q[1] - p[1]) * (r[0] - p[0]) - (q[0] - p[0]) * (r[1] - p[1])
+    d1, d2 = cross(a, b, c), cross(a, b, d)
+    d3, d4 = cross(c, d, a), cross(c, d, b)
+    if d1 * d2 < 0 and d3 * d4 < 0:
+        return True
+    return False
+
+
+def split_crossing_polyline(pts):
+    if not pts or len(pts) < 12:
+        return [pts]
+    n = len(pts)
+    step = max(1, n // 500)
+    for i in range(0, n - 3, step):
+        for j in range(i + 8, n - 1, step):
+            if not _seg_intersect(pts[i], pts[i + 1], pts[j], pts[j + 1]):
+                continue
+            a = pts[: i + 1] + pts[j + 1 :]
+            b = pts[i : j + 1]
+            out = []
+            if len(a) >= 8:
+                out.append(a)
+            if len(b) >= 8:
+                out.append(b)
+            return out or [pts]
+    return [pts]
+
+
+def sanitize_line_art(curves):
+    out = []
+    for c in curves:
+        for p in split_crossing_polyline(open_false_loop(c)):
+            if p and len(p) >= 24:
+                out.append(p)
+    return out
+
+
+def filter_label_curves(curves, w, h):
+    kept = []
+    for pts in curves:
+        ymin = min(p[0] for p in pts)
+        ymax = max(p[0] for p in pts)
+        xmin = min(p[1] for p in pts)
+        xmax = max(p[1] for p in pts)
+        y_mid = (ymin + ymax) / (2 * h)
+        x_mid = (xmin + xmax) / (2 * w)
+        y_span = (ymax - ymin) / h
+        if y_mid < 0.12 and y_span < 0.08 and x_mid < 0.6:
+            continue
+        kept.append(pts)
+    return kept
+
+
+def deduplicate_curves(curves, brightness, w, h, min_dist=8):
+    if len(curves) <= 1:
+        return curves
+    avg_b = []
+    for curve in curves:
+        s = c = 0.0
+        for pt in curve:
+            y, x = int(math.floor(pt[0])), int(math.floor(pt[1]))
+            if 0 <= y < h and 0 <= x < w and brightness is not None:
+                s += float(brightness[y, x])
+                c += 1
+        avg_b.append(s / c if c else 0.5)
+    order = sorted(range(len(curves)), key=lambda i: -avg_b[i])
+    kept, kept_pts = [], []
+    for ci in order:
+        curve = curves[ci]
+        samples = [curve[i] for i in range(0, len(curve), 3)]
+        too_close = False
+        for kps in kept_pts:
+            close = 0
+            check = min(len(samples), 30)
+            for si in range(check):
+                s = samples[int(si * len(samples) / check)]
+                for kp in kps:
+                    if (s[0] - kp[0]) ** 2 + (s[1] - kp[1]) ** 2 < min_dist * min_dist:
+                        close += 1
+                        break
+            if check and close / check > 0.6:
+                too_close = True
+                break
+        if not too_close:
+            kept.append(curve)
+            kept_pts.append(samples[::2])
+    return kept
 
 
 def _travel_dir(curve, end: int):
@@ -1133,7 +1415,79 @@ def curves_to_world(curves, profiles, w, h):
     return worlds
 
 
-def extract_from_rgb(
+def _of_trace_all(rgb, mask, brightness, p, line_drawing, w, h,
+                  of_max_curves=None, of_min_bright=None, of_min_len=None):
+    """Match extractCurvesOrientationField + the extractAll OF branch."""
+    dir_x, dir_y, coherence = compute_orientation_field(brightness, mask.astype(np.float64))
+    detail = branch_detail_cfg(p)
+    axis = growth_axis_cfg(p, w, h)
+    if line_drawing:
+        max_curves, min_len = 24, max(40, p.min_length)
+        min_bright = 0.06
+        tube_r, visit_hits = 1, 120
+        seed_step = max(3, int(round(min(w, h) / 420)))
+        coh_min = 0.08
+        bundle_gap = 0.03
+    else:
+        max_curves = int(detail["max_curves"])
+        min_len = int(detail["min_length"])
+        min_bright = p.bright_layer
+        tube_r = max(1, int(detail["tube_r"]) - (1 if axis["horizontal"] else 0))
+        visit_hits = 160 if axis["horizontal"] else 40
+        seed_step = max(4, int(round(min(w, h) / 300)))
+        coh_min = 0.15
+        bundle_gap = detail["bundle_gap"]
+    if of_max_curves is not None:
+        max_curves = int(of_max_curves)
+    if of_min_bright is not None:
+        min_bright = float(of_min_bright)
+    if of_min_len is not None:
+        min_len = int(of_min_len)
+
+    seeds = []
+    for y in range(seed_step, h - seed_step, seed_step):
+        for x in range(seed_step, w - seed_step, seed_step):
+            if mask[y, x] and brightness[y, x] >= min_bright and coherence[y, x] > coh_min:
+                seeds.append((x, y, float(brightness[y, x] * coherence[y, x])))
+    seeds.sort(key=lambda s: -s[2])
+    visited = np.zeros((h, w), dtype=np.uint8)
+    raw = []
+    for sx, sy, _ in seeds:
+        if len(raw) >= max_curves:
+            break
+        if visited[sy, sx]:
+            continue
+        path = trace_orientation_field(
+            brightness, mask, dir_x, dir_y, coherence,
+            sx, sy, p.invert_mask, line_drawing, visited, tube_r, visit_hits,
+        )
+        if len(path) >= min_len:
+            raw.append(path)
+
+    if line_drawing:
+        bundled = bundle_overdrawn(raw, w, h, bundle_gap)
+        traces = sanitize_line_art(bundled)
+    else:
+        bundled = bundle_overdrawn(raw, w, h, bundle_gap)
+        cleaned = [strip_zigzag(open_false_loop(c)) for c in bundled]
+        cleaned = [c for c in cleaned if c and len(c) >= int(detail["keep_min"])]
+        connected = connect_segments(cleaned, w, h, False, axis["horizontal"])
+        traces = graft_curves(connected, w, h, p, mask, brightness, axis["horizontal"])
+
+    traces = deduplicate_curves(traces, brightness, w, h, 10 if line_drawing else 6)
+    if line_drawing:
+        traces = filter_label_curves(traces, w, h)
+    cache = {
+        "dir_x": dir_x, "dir_y": dir_y, "coherence": coherence,
+        "mask": mask, "brightness": brightness, "rgb": rgb,
+        "params": p, "line_drawing": line_drawing,
+        "tube_r": tube_r, "visit_hits": visit_hits, "w": w, "h": h,
+        "raw": traces,
+    }
+    return traces, cache
+
+
+def _extract_from_rgb_single(
     rgb: np.ndarray,
     params: Optional[ExtractParams] = None,
     card: Optional[CardParams] = None,
@@ -1147,73 +1501,31 @@ def extract_from_rgb(
     p = params or ExtractParams()
     card = card or CardParams()
     h, w = rgb.shape[:2]
+    if p.auto_invert and not p.invert_mask:
+        p = ExtractParams(**{**asdict(p), "invert_mask": detect_invert_mask(rgb)})
     line_drawing = bool(p.line_enhance and detect_line_drawing(rgb))
-    scale = max(w, h) / 1000.0
-    if line_drawing:
-        p = ExtractParams(**{**asdict(p),
-                             "close_radius": max(1, int(round(1 * scale))),
-                             "dilate_radius": 0})
-    mask, brightness = extract_mask(rgb, p, line_drawing)
-    solid = solidify(mask, p, line_drawing)
-    dir_x, dir_y, coherence = compute_orientation_field(brightness, solid.astype(np.float64))
-    detail = branch_detail_cfg(p)
-    axis = growth_axis_cfg(p, w, h)
-    if line_drawing:
-        max_curves, min_len = 24, max(40, p.min_length)
-        min_bright = 0.06
-        tube_r = 1
-        visit_hits = 120
-        seed_step = max(3, int(round(min(w, h) / 420)))
-        coh_min = 0.08
-    else:
-        max_curves = int(detail["max_curves"])
-        min_len = int(detail["min_length"])
-        min_bright = p.bright_layer
-        tube_r = max(1, int(detail["tube_r"]) - (1 if axis["horizontal"] else 0))
-        visit_hits = 160 if axis["horizontal"] else 40
-        seed_step = max(4, int(round(min(w, h) / 300)))
-        coh_min = 0.15
-
-    seeds = []
-    for y in range(seed_step, h - seed_step, seed_step):
-        for x in range(seed_step, w - seed_step, seed_step):
-            if solid[y, x] and brightness[y, x] >= min_bright and coherence[y, x] > coh_min:
-                seeds.append((x, y, float(brightness[y, x] * coherence[y, x])))
-    seeds.sort(key=lambda s: -s[2])
-    visited = np.zeros((h, w), dtype=np.uint8)
-    raw = []
-    for sx, sy, _ in seeds:
-        if len(raw) >= max_curves:
-            break
-        if visited[sy, sx]:
-            continue
-        path = trace_orientation_field(
-            brightness, solid, dir_x, dir_y, coherence,
-            sx, sy, p.invert_mask, line_drawing, visited, tube_r, visit_hits,
-        )
-        if len(path) >= min_len:
-            raw.append(path)
-
-    if line_drawing:
-        bundled = bundle_overdrawn(raw, w, h, 0.03)
-        traces = [c for c in bundled if c and len(c) >= 24]
-    else:
-        bundled = bundle_overdrawn(raw, w, h, detail["bundle_gap"])
-        cleaned = [strip_zigzag(c) for c in bundled]
-        cleaned = [c for c in cleaned if c and len(c) >= int(detail["keep_min"])]
-        connected = connect_segments(cleaned, w, h, False, axis["horizontal"])
-        traces = graft_curves(connected, w, h, p, solid, brightness, axis["horizontal"])
+    bg_mask = None
+    if p.bg_enabled and not line_drawing:
+        bg_mask = build_background_mask(rgb, p)
+    mask, brightness = extract_mask(rgb, p, line_drawing, bg_mask)
+    p = auto_adapt(mask, p, line_drawing)
+    # Web still traces on S.mask (HSV), not S.solid. solidify is preview-only for OF.
+    traces, cache = _of_trace_all(rgb, mask, brightness, p, line_drawing, w, h)
 
     n_samp = min(max(p.num_samples, 160), 480 if line_drawing else 600)
-    eps = max(2.8, min(p.rdp_epsilon, 7)) if line_drawing else max(5, p.rdp_epsilon)
+    if line_drawing:
+        eps = max(2.8, min(p.rdp_epsilon, 7))
+    else:
+        eps = max(5, p.rdp_epsilon)
     smoothed = [fit_smooth(c, n_samp, eps, line_drawing) for c in traces]
     smoothed = [c for c in smoothed if c and len(c) >= 2]
+    axis = growth_axis_cfg(p, w, h)
     levels, colors = classify_curves(smoothed, rgb)
     profiles = estimate_depths(smoothed, brightness, w, h, axis["horizontal"], p.invert_mask)
     worlds = curves_to_world(smoothed, profiles, w, h)
 
     result = ExtractResult(
-        version=VERSION, img_w=w, img_h=h, line_drawing=line_drawing, card=card
+        version=VERSION, img_w=w, img_h=h, line_drawing=line_drawing, card=card, of_cache=cache
     )
     for i, pts in enumerate(smoothed):
         result.curves.append(
@@ -1229,9 +1541,85 @@ def extract_from_rgb(
     return result
 
 
-def extract_from_path(path: str, params: Optional[ExtractParams] = None,
-                      card: Optional[CardParams] = None) -> ExtractResult:
-    return extract_from_rgb(load_rgb_u8(path), params, card)
+def pick_stroke(result: ExtractResult, img_x: float, img_y: float) -> ExtractResult:
+    """HTML「点选补一笔」: seed OF at the clicked ink pixel."""
+    cache = result.of_cache
+    if not cache:
+        raise RuntimeError("没有可补笔的提取缓存，请先提取")
+    w, h = cache["w"], cache["h"]
+    mask = cache["mask"]
+    ink = None
+    bd = 28 * 28 + 1
+    x0, y0 = int(round(img_x)), int(round(img_y))
+    for dy in range(-28, 29):
+        for dx in range(-28, 29):
+            xx, yy = x0 + dx, y0 + dy
+            if xx < 1 or yy < 1 or xx >= w - 1 or yy >= h - 1:
+                continue
+            if not mask[yy, xx]:
+                continue
+            d = dx * dx + dy * dy
+            if d < bd:
+                bd = d
+                ink = (xx, yy)
+    if ink is None:
+        raise RuntimeError("请点在线稿墨水上")
+    visited = np.zeros((h, w), dtype=np.uint8)
+    for c in cache.get("raw") or []:
+        for i in range(0, len(c), 2):
+            y, x = int(round(c[i][0])), int(round(c[i][1]))
+            if 0 <= y < h and 0 <= x < w:
+                visited[y, x] = 1
+    path = trace_orientation_field(
+        cache["brightness"], mask, cache["dir_x"], cache["dir_y"], cache["coherence"],
+        ink[0], ink[1], cache["params"].invert_mask, cache["line_drawing"],
+        visited, cache["tube_r"], cache["visit_hits"],
+    )
+    if not path or len(path) < 24:
+        raise RuntimeError("这一笔太短，换一个更靠近线中心的点")
+    raw = sanitize_line_art([path])
+    raw = raw[0] if raw else path
+    existing = cache.get("raw") or []
+    for c in existing:
+        if _mean_nearest(raw, c, 6) < 10:
+            raise RuntimeError("这一笔已经有了，点另一条线")
+    cache["raw"] = existing + [raw]
+    p = cache["params"]
+    n_samp = min(max(p.num_samples, 160), 480 if cache["line_drawing"] else 600)
+    eps = max(2.8, min(p.rdp_epsilon, 7)) if cache["line_drawing"] else max(5, p.rdp_epsilon)
+    traces = deduplicate_curves(cache["raw"], cache["brightness"], w, h, 10)
+    smoothed = [fit_smooth(c, n_samp, eps, cache["line_drawing"]) for c in traces]
+    smoothed = [c for c in smoothed if c and len(c) >= 2]
+    axis = growth_axis_cfg(p, w, h)
+    levels, colors = classify_curves(smoothed, cache["rgb"])
+    profiles = estimate_depths(smoothed, cache["brightness"], w, h, axis["horizontal"], p.invert_mask)
+    worlds = curves_to_world(smoothed, profiles, w, h)
+    result.curves = []
+    for i, pts in enumerate(smoothed):
+        result.curves.append(
+            ExtractedCurve(
+                key="curve_%02d" % (i + 1),
+                name="Curve %02d" % (i + 1),
+                points_yx=np.asarray(pts, dtype=np.float64),
+                points3d=worlds[i],
+                level=levels[i] if i < len(levels) else 1,
+                color_rgb=colors[i] if i < len(colors) else (255, 215, 0),
+            )
+        )
+    return result
+
+
+def extract_from_path(
+    path: str,
+    params: Optional[ExtractParams] = None,
+    card: Optional[CardParams] = None,
+    side_path: Optional[str] = None,
+    top_path: Optional[str] = None,
+    **kwargs,
+) -> ExtractResult:
+    side = load_rgb_u8(side_path) if side_path else None
+    top = load_rgb_u8(top_path) if top_path else None
+    return extract_from_rgb(load_rgb_u8(path), params, card, side, top, **kwargs)
 
 
 def result_from_json(data: Dict[str, Any]) -> ExtractResult:
@@ -1360,3 +1748,789 @@ def build_card_sheets(points: np.ndarray, card: CardParams, scale: float = 0.01)
             faces.append((a, b, d, c))
         sheets.append((verts, faces, uvs))
     return sheets
+
+
+# ---------------------------------------------------------------------------
+# Tri-view (same as app.html processTriViews / reconstructTriView / rectify)
+# ---------------------------------------------------------------------------
+
+def _ink_bbox(rgb: np.ndarray, thresh: int = 28):
+    mx = rgb.max(axis=2)
+    ys, xs = np.nonzero(mx > thresh)
+    h, w = rgb.shape[:2]
+    if len(xs) == 0:
+        return {"x": 0, "y": 0, "w": w, "h": h, "empty": True}
+    return {
+        "x": int(xs.min()), "y": int(ys.min()),
+        "w": int(xs.max() - xs.min() + 1), "h": int(ys.max() - ys.min() + 1),
+        "empty": False,
+    }
+
+
+def _warp_ink_to_box(src: np.ndarray, src_box, dw, dh, dst_box) -> np.ndarray:
+    out = np.zeros((dh, dw, 3), dtype=np.uint8)
+    if src is None or src_box.get("empty") or dst_box["w"] < 1 or dst_box["h"] < 1:
+        return out
+    sx0, sy0 = src_box["x"], src_box["y"]
+    swb, shb = max(1, src_box["w"]), max(1, src_box["h"])
+    dx0, dy0 = dst_box["x"], dst_box["y"]
+    dwb, dhb = max(1, dst_box["w"]), max(1, dst_box["h"])
+    sh, sw = src.shape[:2]
+    for y in range(sy0, min(sh, sy0 + shb)):
+        for x in range(sx0, min(sw, sx0 + swb)):
+            r, g, b = [int(v) for v in src[y, x]]
+            if max(r, g, b) < 20:
+                continue
+            u = (x - sx0 + 0.5) / swb
+            v = (y - sy0 + 0.5) / shb
+            dx = int(round(dx0 + u * dwb))
+            dy = int(round(dy0 + v * dhb))
+            for px, py in ((dx, dy), (dx + 1, dy), (dx, dy + 1)):
+                if 0 <= px < dw and 0 <= py < dh:
+                    out[py, px] = (r, g, b)
+    return out
+
+
+def rectify_tri_views(front: np.ndarray, side: Optional[np.ndarray], top: Optional[np.ndarray]):
+    if front is None or (side is None and top is None):
+        return front, side, top
+    H, W = front.shape[:2]
+    fbox = _ink_bbox(front)
+    if fbox["empty"]:
+        return front, side, top
+    z0, z1 = 0.14, 0.86
+    side_dst = {
+        "x": int(round(z0 * W)),
+        "y": max(0, fbox["y"]),
+        "w": max(8, int(round((z1 - z0) * W))),
+        "h": max(8, min(H, fbox["y"] + fbox["h"]) - max(0, fbox["y"])),
+    }
+    top_dst = {
+        "x": max(0, fbox["x"]),
+        "y": int(round(z0 * H)),
+        "w": max(8, min(W, fbox["x"] + fbox["w"]) - max(0, fbox["x"])),
+        "h": max(8, int(round((z1 - z0) * H))),
+    }
+    if side is not None:
+        side = _warp_ink_to_box(side, _ink_bbox(side), W, H, side_dst)
+    if top is not None:
+        top = _warp_ink_to_box(top, _ink_bbox(top), W, H, top_dst)
+    return front, side, top
+
+
+def _build_row_table(mask: np.ndarray):
+    h, w = mask.shape
+    rows = []
+    for y in range(h):
+        xs = np.nonzero(mask[y])[0]
+        rows.append((xs / max(1, w - 1)).tolist() if len(xs) else [])
+    return {"rows": rows, "w": w, "h": h}
+
+
+def _build_col_table(mask: np.ndarray):
+    h, w = mask.shape
+    cols = []
+    for x in range(w):
+        ys = np.nonzero(mask[:, x])[0]
+        cols.append((ys / max(1, h - 1)).tolist() if len(ys) else [])
+    return {"cols": cols, "w": w, "h": h}
+
+
+def _query_row_table(table, y_n, x_n):
+    if not table:
+        return None
+    y = int(round(y_n * (table["h"] - 1)))
+    for r in range(8):
+        for yy in (y - r, y + r):
+            if 0 <= yy < table["h"] and table["rows"][yy]:
+                arr = table["rows"][yy]
+                idx = max(0, min(len(arr) - 1, int(round(x_n * (len(arr) - 1)))))
+                return arr[idx]
+    return None
+
+
+def _cluster_vals(arr, eps):
+    if not arr:
+        return []
+    s = sorted(arr)
+    out, sm, n = [], s[0], 1
+    for i in range(1, len(s)):
+        if s[i] - s[i - 1] <= eps:
+            sm += s[i]
+            n += 1
+        else:
+            out.append(sm / n)
+            sm, n = s[i], 1
+    out.append(sm / n)
+    return out
+
+
+def _z_cands_at_y(table, y_n, win):
+    if not table:
+        return []
+    y = int(round(y_n * (table["h"] - 1)))
+    c = []
+    for d in range(-win, win + 1):
+        yy = y + d
+        if 0 <= yy < table["h"]:
+            c.extend(table["rows"][yy])
+    return _cluster_vals(c, 12 / max(1, table["w"] - 1))
+
+
+def _z_cands_at_x(col_table, x_n, win):
+    if not col_table:
+        return []
+    x = int(round(x_n * (col_table["w"] - 1)))
+    c = []
+    for d in range(-win, win + 1):
+        xx = x + d
+        if 0 <= xx < col_table["w"]:
+            c.extend(col_table["cols"][xx])
+    return _cluster_vals(c, 12 / max(1, col_table["h"] - 1))
+
+
+def _smooth1d(arr, radius):
+    n = len(arr)
+    out = np.zeros(n, dtype=np.float64)
+    for i in range(n):
+        s = c = 0.0
+        for k in range(-radius, radius + 1):
+            j = i + k
+            if 0 <= j < n and math.isfinite(arr[j]):
+                s += arr[j]
+                c += 1
+        out[i] = s / c if c else arr[i]
+    return out
+
+
+def _mask_from_view(rgb: np.ndarray, p: ExtractParams, line_drawing: bool):
+    inv = detect_invert_mask(rgb)
+    m, _b = extract_mask(rgb, ExtractParams(**{**asdict(p), "invert_mask": inv, "auto_invert": False}), line_drawing)
+    return m
+
+
+def extract_line_curves_from_rgb(rgb: np.ndarray, p: Optional[ExtractParams] = None):
+    """HTML extractLineCurvesFromRgb — side/top line-art OF (0.05 / 16 / 40)."""
+    p = p or ExtractParams()
+    rgb = rgb[..., :3]
+    if rgb.dtype != np.uint8:
+        rgb = np.clip(rgb, 0, 255).astype(np.uint8)
+    h, w = rgb.shape[:2]
+    mx = rgb.max(axis=2).astype(np.float64) / 255.0
+    thr = min(p.bright_thresh, 0.22)
+    mask = (mx >= thr).astype(np.uint8)
+    solid = _close(mask, min(2, p.close_radius)) if p.close_radius > 0 else mask.copy()
+    solid = _remove_small(solid, p.min_object_size)
+    lp = ExtractParams(**{**asdict(p), "invert_mask": False, "min_length": 40})
+    traces, _cache = _of_trace_all(
+        rgb, mask, mx, lp, True, w, h,
+        of_max_curves=16, of_min_bright=0.05, of_min_len=40,
+    )
+    return {"curves": traces, "w": w, "h": h, "mask": mask, "solid": solid}
+
+
+def _stamp_polyline_mask(curves, w, h, radius: int = 1) -> np.ndarray:
+    m = np.zeros((h, w), dtype=np.uint8)
+    r = max(0, int(radius))
+    for c in curves or []:
+        for p in c:
+            y, x = int(round(p[0])), int(round(p[1]))
+            y0, y1 = max(0, y - r), min(h, y + r + 1)
+            x0, x1 = max(0, x - r), min(w, x + r + 1)
+            m[y0:y1, x0:x1] = 1
+    return m
+
+
+def _curve_y_span(pts, h):
+    ys = [p[0] / max(1, h - 1) for p in pts]
+    ymin, ymax = min(ys), max(ys)
+    return ymin, ymax, max(1e-6, ymax - ymin)
+
+
+def _curve_x_span(pts, w):
+    xs = [p[1] / max(1, w - 1) for p in pts]
+    xmin, xmax = min(xs), max(xs)
+    return xmin, xmax, max(1e-6, xmax - xmin)
+
+
+def _match_front_to_side(front_curves, pack, front_w, front_h):
+    if not pack or not pack.get("curves") or not front_curves:
+        return [None] * len(front_curves or [])
+    used = [False] * len(pack["curves"])
+    match = [None] * len(front_curves)
+    order = sorted(range(len(front_curves)), key=lambda i: -len(front_curves[i]))
+    for fi in order:
+        pts = front_curves[fi]
+        fy0, fy1, fspan = _curve_y_span(pts, front_h)
+        fx0, fx1, fxspan = _curve_x_span(pts, front_w)
+        f_vert = fspan >= fxspan * 0.95
+        best, best_score, best_rev = -1, 0.08, False
+        for si, sc in enumerate(pack["curves"]):
+            if used[si]:
+                continue
+            sy0, sy1, sspan = _curve_y_span(sc, pack["h"])
+            sx0, sx1, sxspan = _curve_x_span(sc, pack["w"])
+            s_vert = sspan >= sxspan * 0.95
+            ov = max(0.0, min(fy1, sy1) - max(fy0, sy0))
+            score = (ov / max(fspan, sspan)) * (0.5 + 0.5 * min(len(pts), len(sc)) / max(len(pts), len(sc)))
+            score *= 1.7 if f_vert == s_vert else 0.4
+            if score <= best_score:
+                continue
+            y0 = pts[0][0] / front_h
+            y1 = pts[-1][0] / front_h
+            s0 = sc[0][0] / pack["h"]
+            s1 = sc[-1][0] / pack["h"]
+            best, best_score = si, score
+            best_rev = (abs(y0 - s1) + abs(y1 - s0)) < (abs(y0 - s0) + abs(y1 - s1))
+        if best < 0:
+            continue
+        used[best] = True
+        match[fi] = {"sideIdx": best, "reversed": best_rev}
+    return match
+
+
+def _match_front_to_top(front_curves, pack, front_w, front_h):
+    if not pack or not pack.get("curves") or not front_curves:
+        return [None] * len(front_curves or [])
+    used = [False] * len(pack["curves"])
+    match = [None] * len(front_curves)
+    order = sorted(range(len(front_curves)), key=lambda i: -len(front_curves[i]))
+    for fi in order:
+        pts = front_curves[fi]
+        fx0, fx1, fxspan = _curve_x_span(pts, front_w)
+        fy0, fy1, fyspan = _curve_y_span(pts, front_h)
+        f_horiz = fxspan >= fyspan * 0.95
+        best, best_score, best_rev = -1, 0.08, False
+        for ti, tc in enumerate(pack["curves"]):
+            if used[ti]:
+                continue
+            tx0, tx1, txspan = _curve_x_span(tc, pack["w"])
+            tz0, tz1, tzspan = _curve_y_span(tc, pack["h"])
+            t_horiz = txspan >= tzspan * 0.95
+            ov = max(0.0, min(fx1, tx1) - max(fx0, tx0))
+            score = (ov / max(fxspan, txspan)) * (0.5 + 0.5 * min(len(pts), len(tc)) / max(len(pts), len(tc)))
+            score *= 1.7 if f_horiz == t_horiz else 0.4
+            if score <= best_score:
+                continue
+            x0 = pts[0][1] / front_w
+            x1 = pts[-1][1] / front_w
+            t0 = tc[0][1] / pack["w"]
+            t1 = tc[-1][1] / pack["w"]
+            best, best_score = ti, score
+            best_rev = (abs(x0 - t1) + abs(x1 - t0)) < (abs(x0 - t0) + abs(x1 - t1))
+        if best < 0:
+            continue
+        used[best] = True
+        match[fi] = {"topIdx": best, "reversed": best_rev}
+    return match
+
+
+def _mask_axis_span(mask: np.ndarray):
+    ys, xs = np.nonzero(mask)
+    h, w = mask.shape
+    if len(xs) == 0:
+        return {"yminN": 0.0, "ymaxN": 1.0, "xminN": 0.0, "xmaxN": 1.0}
+    return {
+        "yminN": float(ys.min()) / max(1, h - 1),
+        "ymaxN": float(ys.max()) / max(1, h - 1),
+        "xminN": float(xs.min()) / max(1, w - 1),
+        "xmaxN": float(xs.max()) / max(1, w - 1),
+    }
+
+
+def _table_ink_span_rows(table):
+    if not table:
+        return {"xminN": 0.0, "xmaxN": 1.0, "yminN": 0.0, "ymaxN": 1.0}
+    ymin, ymax = table["h"], -1
+    xminN, xmaxN = 1.0, 0.0
+    for y, row in enumerate(table["rows"]):
+        if not row:
+            continue
+        if y < ymin:
+            ymin = y
+        if y > ymax:
+            ymax = y
+        xminN = min(xminN, min(row))
+        xmaxN = max(xmaxN, max(row))
+    if ymax < 0:
+        return {"xminN": 0.0, "xmaxN": 1.0, "yminN": 0.0, "ymaxN": 1.0}
+    return {
+        "xminN": xminN, "xmaxN": xmaxN,
+        "yminN": ymin / max(1, table["h"] - 1),
+        "ymaxN": ymax / max(1, table["h"] - 1),
+    }
+
+
+def _table_ink_span_cols(table):
+    if not table:
+        return {"xminN": 0.0, "xmaxN": 1.0, "yminN": 0.0, "ymaxN": 1.0}
+    xmin, xmax = table["w"], -1
+    yminN, ymaxN = 1.0, 0.0
+    for x, col in enumerate(table["cols"]):
+        if not col:
+            continue
+        if x < xmin:
+            xmin = x
+        if x > xmax:
+            xmax = x
+        yminN = min(yminN, min(col))
+        ymaxN = max(ymaxN, max(col))
+    if xmax < 0:
+        return {"xminN": 0.0, "xmaxN": 1.0, "yminN": 0.0, "ymaxN": 1.0}
+    return {
+        "xminN": xmin / max(1, table["w"] - 1),
+        "xmaxN": xmax / max(1, table["w"] - 1),
+        "yminN": yminN, "ymaxN": ymaxN,
+    }
+
+
+def _map_norm(v, a0, a1, b0, b1):
+    t = (v - a0) / max(1e-6, a1 - a0)
+    return b0 + max(0.0, min(1.0, t)) * (b1 - b0)
+
+
+def _compute_tri_align(front_mask, side_tbl, top_cols):
+    front = _mask_axis_span(front_mask) if front_mask is not None else {
+        "yminN": 0.0, "ymaxN": 1.0, "xminN": 0.0, "xmaxN": 1.0
+    }
+    side = _table_ink_span_rows(side_tbl)
+    top = _table_ink_span_cols(top_cols)
+    return {"front": front, "side": side, "top": top}
+
+
+def _detect_top_z_flip(front_mask, side_tbl, top_cols, align):
+    if front_mask is None or not side_tbl or not top_cols:
+        return False
+    h, w = front_mask.shape
+    step = max(4, int(round(min(w, h) / 80)))
+    same = flip = 0
+    for y in range(0, h, step):
+        for x in range(0, w, step):
+            if not front_mask[y, x]:
+                continue
+            y_n = _map_norm(y / max(1, h - 1), align["front"]["yminN"], align["front"]["ymaxN"],
+                            align["side"]["yminN"], align["side"]["ymaxN"])
+            x_n = _map_norm(x / max(1, w - 1), align["front"]["xminN"], align["front"]["xmaxN"],
+                            align["top"]["xminN"], align["top"]["xmaxN"])
+            side_c = _z_cands_at_y(side_tbl, y_n, 3)
+            top_c = _z_cands_at_x(top_cols, x_n, 3)
+            if not side_c or not top_c:
+                continue
+            s = side_c[len(side_c) // 2]
+            d0 = min(abs(s - t) for t in top_c)
+            d1 = min(abs(s - (1 - t)) for t in top_c)
+            if d1 < d0:
+                flip += 1
+            else:
+                same += 1
+    return flip > same + 4
+
+
+def _interp_x_at_y(pts, y_pix, fallback):
+    xs = []
+    for i in range(1, len(pts)):
+        y0, y1 = pts[i - 1][0], pts[i][0]
+        if y_pix < min(y0, y1) - 2 or y_pix > max(y0, y1) + 2:
+            continue
+        if abs(y1 - y0) < 1e-6:
+            xs.append((pts[i - 1][1] + pts[i][1]) / 2)
+        else:
+            a = (y_pix - y0) / (y1 - y0)
+            if -0.2 <= a <= 1.2:
+                xs.append(pts[i - 1][1] + a * (pts[i][1] - pts[i - 1][1]))
+    if xs:
+        return xs
+    best, bx = 1e9, pts[0][1]
+    for p in pts:
+        d = abs(p[0] - y_pix)
+        if d < best:
+            best, bx = d, p[1]
+    return [bx] if best < fallback else []
+
+
+def _pick_z_from_list(vals, prev, scale):
+    if not vals:
+        return None
+    if prev is None:
+        return vals[0] / scale
+    z, bd = vals[0] / scale, 1e9
+    for v in vals:
+        zn = v / scale
+        d = abs(zn - prev)
+        if d < bd:
+            bd, z = d, zn
+    return z
+
+
+def _matched_side_curve(tri, idx, front_pts):
+    pack = tri.get("side_pack")
+    match = tri.get("side_match")
+    if pack and match and idx is not None and idx < len(match) and match[idx]:
+        c = pack["curves"][match[idx]["sideIdx"]]
+        return list(reversed(c)) if match[idx]["reversed"] else c
+    if not pack or not pack.get("curves") or front_pts is None:
+        return None
+    fw, fh = tri.get("front_w") or pack["w"], tri.get("front_h") or pack["h"]
+    fy0, fy1, fspan = _curve_y_span(front_pts, fh)
+    fx0, fx1, fxspan = _curve_x_span(front_pts, fw)
+    f_vert = fspan >= fxspan * 0.95
+    best, best_s = None, -1.0
+    for c in pack["curves"]:
+        sy0, sy1, sspan = _curve_y_span(c, pack["h"])
+        sx0, sx1, sxspan = _curve_x_span(c, pack["w"])
+        s_vert = sspan >= sxspan * 0.95
+        ov = max(0.0, min(fy1, sy1) - max(fy0, sy0))
+        score = ov * (0.3 + min(sspan, fspan))
+        if f_vert == s_vert:
+            score *= 1.6
+        if score > best_s:
+            best_s, best = score, c
+    return best
+
+
+def _lookup_side_zn(front_pts, i, idx, prev, tri, img_h):
+    pack = tri.get("side_pack")
+    align = tri.get("align")
+    y_n = front_pts[i][0] / img_h
+    if tri.get("align_ink") and align:
+        y_n = _map_norm(y_n, align["front"]["yminN"], align["front"]["ymaxN"],
+                        align["side"]["yminN"], align["side"]["ymaxN"])
+    side = _matched_side_curve(tri, idx, front_pts)
+    if pack and side:
+        fb = max(28, pack["h"] * 0.04)
+        z = _pick_z_from_list(_interp_x_at_y(side, y_n * (pack["h"] - 1), fb), prev, max(1, pack["w"] - 1))
+        if z is not None:
+            return z
+    cands = _z_cands_at_y(tri.get("side"), y_n, 6)
+    if not cands:
+        return None
+    z, bd = cands[0], 1e9
+    for cand in cands:
+        d = abs(cand - 0.5) if prev is None else abs(cand - prev)
+        if d < bd:
+            bd, z = d, cand
+    return z
+
+
+def build_tri_state(front_rgb, front_mask, side_rgb, top_rgb, p: ExtractParams,
+                    line_drawing: bool, front_curves=None):
+    side_tbl = _build_row_table(_mask_from_view(side_rgb, p, line_drawing)) if side_rgb is not None else None
+    top_tbl = _build_row_table(_mask_from_view(top_rgb, p, line_drawing)) if top_rgb is not None else None
+    top_cols = None
+    side_pack = top_pack = None
+    if line_drawing and side_rgb is not None:
+        side_pack = extract_line_curves_from_rgb(side_rgb, p)
+    if line_drawing and top_rgb is not None:
+        top_pack = extract_line_curves_from_rgb(top_rgb, p)
+        ink = _stamp_polyline_mask(top_pack["curves"], top_pack["w"], top_pack["h"], 1)
+        top_cols = _build_col_table(ink)
+        top_tbl = _build_row_table(ink)
+    elif top_rgb is not None:
+        tm = _mask_from_view(top_rgb, p, line_drawing)
+        top_cols = _build_col_table(tm)
+    align = _compute_tri_align(front_mask, side_tbl, top_cols)
+    top_flip = _detect_top_z_flip(front_mask, side_tbl, top_cols, align) if line_drawing else False
+    fh, fw = (front_mask.shape[:2] if front_mask is not None else (0, 0))
+    side_match = _match_front_to_side(front_curves, side_pack, fw, fh) if line_drawing else None
+    top_match = _match_front_to_top(front_curves, top_pack, fw, fh) if line_drawing else None
+    return {
+        "side": side_tbl, "top": top_tbl, "top_cols": top_cols, "line": line_drawing,
+        "side_pack": side_pack, "top_pack": top_pack,
+        "side_match": side_match, "top_match": top_match,
+        "align": align, "align_ink": bool(line_drawing and p.tri_align_ink),
+        "top_flip": top_flip, "front_w": fw, "front_h": fh,
+    }
+
+
+def reconstruct_tri_z(front_pts, img_w, img_h, tri, trust_top: float, idx=None):
+    n = len(front_pts)
+    w_top = max(0.0, min(1.0, trust_top))
+    z_n = np.zeros(n, dtype=np.float64)
+    prev = None
+    align = tri.get("align")
+    align_on = bool(tri.get("align_ink") and align)
+    flip = bool(tri.get("top_flip"))
+    for i, pt in enumerate(front_pts):
+        y_n = pt[0] / img_h
+        x_n = pt[1] / img_w
+        if align_on:
+            y_n = _map_norm(y_n, align["front"]["yminN"], align["front"]["ymaxN"],
+                            align["side"]["yminN"], align["side"]["ymaxN"])
+            x_n = _map_norm(x_n, align["front"]["xminN"], align["front"]["xmaxN"],
+                            align["top"]["xminN"], align["top"]["xmaxN"])
+        side_c = _z_cands_at_y(tri.get("side"), y_n, 4)
+        z_side = None
+        if side_c:
+            z_side = side_c[0]
+            bd = 1e9
+            for cand in side_c:
+                d = abs(cand - 0.5) if prev is None else abs(cand - prev)
+                if d < bd:
+                    bd, z_side = d, cand
+        else:
+            z_side = _lookup_side_zn(front_pts, i, idx, prev, tri, img_h)
+        top_c = _z_cands_at_x(tri.get("top_cols") or None, x_n, 4)
+        z_top = None
+        if top_c:
+            z_top = (1 - top_c[0]) if flip else top_c[0]
+            bd = 1e9
+            for cand in top_c:
+                cz = (1 - cand) if flip else cand
+                d = abs(cz - 0.5) if prev is None else abs(cz - prev)
+                if d < bd:
+                    bd, z_top = d, cz
+        if z_side is None and z_top is None:
+            z = prev if prev is not None else 0.5
+        elif z_side is None:
+            z = z_top
+        elif z_top is None:
+            z = z_side
+        else:
+            z = z_side * (1 - w_top) + z_top * w_top
+        if prev is not None:
+            dy = abs(front_pts[i][0] - front_pts[max(0, i - 1)][0]) / max(1, img_h)
+            max_step = 0.04 + dy * 3
+            if abs(z - prev) > max_step:
+                z = prev + math.copysign(max_step, z - prev)
+        z_n[i] = z
+        prev = z
+    rad = max(14, int(round(n / 22)))
+    zs = _smooth1d(_smooth1d(z_n, rad), rad)
+    return zs
+
+
+def front_to_world_tri(curve, idx, w, h, tri, trust_top, line_drawing):
+    depth_range = w * 0.35
+    if line_drawing:
+        z_n = reconstruct_tri_z(curve, w, h, tri, trust_top, idx=idx)
+        zs = (z_n - 0.5) * 2 * depth_range
+    else:
+        zs = []
+        for p in curve:
+            z_side = _query_row_table(tri.get("side"), p[0] / h, p[1] / w)
+            z_n = z_side if z_side is not None else p[1] / w
+            zs.append((z_n - 0.5) * 2 * depth_range)
+        zs = _smooth1d(zs, 6)
+    pts = []
+    for i, p in enumerate(curve):
+        pts.append([p[1] - w / 2, p[0] - h / 2, float(zs[i])])
+    return np.asarray(pts, dtype=np.float64)
+
+
+def extract_from_rgb(
+    rgb: np.ndarray,
+    params: Optional[ExtractParams] = None,
+    card: Optional[CardParams] = None,
+    side_rgb: Optional[np.ndarray] = None,
+    top_rgb: Optional[np.ndarray] = None,
+    trust_top: Optional[float] = None,
+    tri_rectify: Optional[bool] = None,
+) -> ExtractResult:
+    result = _extract_from_rgb_single(rgb, params, card)
+    p = params or ExtractParams()
+    if side_rgb is None and top_rgb is None:
+        return result
+    tt = p.trust_top if trust_top is None else trust_top
+    do_rect = p.tri_rectify if tri_rectify is None else tri_rectify
+    front = rgb[..., :3]
+    if front.dtype != np.uint8:
+        front = (np.clip(front, 0, 255)).astype(np.uint8)
+    if do_rect:
+        front, side_rgb, top_rgb = rectify_tri_views(front, side_rgb, top_rgb)
+        if side_rgb is not None or top_rgb is not None:
+            result = _extract_from_rgb_single(front, params, card)
+    cache = result.of_cache or {}
+    mask = cache.get("mask")
+    if mask is None:
+        return result
+    tri = build_tri_state(
+        front, mask, side_rgb, top_rgb, p, result.line_drawing,
+        front_curves=[c.points_yx for c in result.curves],
+    )
+    worlds = [
+        front_to_world_tri(c.points_yx, i, result.img_w, result.img_h, tri, tt, result.line_drawing)
+        for i, c in enumerate(result.curves)
+    ]
+    for i, c in enumerate(result.curves):
+        c.points3d = worlds[i]
+    cache["tri"] = tri
+    result.of_cache = cache
+    return result
+
+
+def _format_fbx_num(v: float) -> str:
+    return ("%.6f" % float(v)).rstrip("0").rstrip(".") if abs(v) > 1e-12 else "0"
+
+
+def export_card_fbx(result: ExtractResult, path: str, scale: float = 0.01) -> None:
+    """ASCII FBX, Y-up, same convention as the HTML 面片 FBX."""
+    V, UV, PVI, NRM = [], [], [], []
+    for entry in result.curves:
+        for verts, faces, uvs in build_card_sheets(entry.points3d, result.card, scale=scale):
+            base = len(V) // 3
+            for i, (x, y, z) in enumerate(verts):
+                V.extend([x, -y, z])
+                UV.extend([uvs[i][0], uvs[i][1]])
+            for a, b, d, c in faces:
+                tris = ((a, b, c), (b, d, c))
+                for i0, i1, i2 in tris:
+                    ia, ib, ic = base + i0, base + i1, base + i2
+                    ax, ay, az = V[ia * 3], V[ia * 3 + 1], V[ia * 3 + 2]
+                    ux, uy, uz = V[ib * 3] - ax, V[ib * 3 + 1] - ay, V[ib * 3 + 2] - az
+                    vx, vy, vz = V[ic * 3] - ax, V[ic * 3 + 1] - ay, V[ic * 3 + 2] - az
+                    nx = uy * vz - uz * vy
+                    ny = uz * vx - ux * vz
+                    nz = ux * vy - uy * vx
+                    nl = math.hypot(nx, ny, nz) or 1.0
+                    PVI.extend([ia, ib, -ic - 1])
+                    for _ in range(3):
+                        NRM.extend([nx / nl, ny / nl, nz / nl])
+
+    def chunk(arr, per):
+        s = ""
+        for i, v in enumerate(arr):
+            if i % per == 0:
+                s += "\t\t\t"
+            s += _format_fbx_num(v) if isinstance(v, float) else str(v)
+            if i < len(arr) - 1:
+                s += ","
+            if i % per == per - 1 or i == len(arr) - 1:
+                s += "\n"
+        return s
+
+    fbx = f"""; FBX 7.4.0 ASCII — Curve Extractor intersecting cards
+FBXHeaderExtension:  {{
+\tFBXHeaderVersion: 1003
+\tFBXVersion: 7400
+\tCreator: "Curve Extractor"
+}}
+GlobalSettings:  {{
+\tVersion: 1000
+\tProperties70:  {{
+\t\tP: "UpAxis", "int", "Integer", "",1
+\t\tP: "UpAxisSign", "int", "Integer", "",1
+\t\tP: "FrontAxis", "int", "Integer", "",2
+\t\tP: "FrontAxisSign", "int", "Integer", "",1
+\t\tP: "CoordAxis", "int", "Integer", "",0
+\t\tP: "CoordAxisSign", "int", "Integer", "",1
+\t\tP: "UnitScaleFactor", "double", "Number", "",1
+\t}}
+}}
+Definitions:  {{
+\tVersion: 100
+\tCount: 2
+\tObjectType: "GlobalSettings" {{Count: 1}}
+\tObjectType: "Model" {{Count: 1}}
+\tObjectType: "Geometry" {{Count: 1}}
+}}
+Objects:  {{
+\tGeometry: 100000, "Geometry::cards", "Mesh" {{
+\t\tVertices: *{len(V)} {{
+{chunk(V, 9)}\t\t}}
+\t\tPolygonVertexIndex: *{len(PVI)} {{
+{chunk(PVI, 12)}\t\t}}
+\t\tGeometryVersion: 124
+\t\tLayerElementNormal: 0 {{
+\t\t\tVersion: 101
+\t\t\tName: "Normals"
+\t\t\tMappingInformationType: "ByPolygonVertex"
+\t\t\tReferenceInformationType: "Direct"
+\t\t\tNormals: *{len(NRM)} {{
+{chunk(NRM, 9)}\t\t\t}}
+\t\t}}
+\t\tLayerElementUV: 0 {{
+\t\t\tVersion: 101
+\t\t\tName: "map1"
+\t\t\tMappingInformationType: "ByPolygonVertex"
+\t\t\tReferenceInformationType: "Direct"
+\t\t\tUV: *{len(UV)} {{
+{chunk(UV, 8)}\t\t\t}}
+\t\t}}
+\t}}
+\tModel: 200000, "Model::CurveExtractorCards", "Mesh" {{
+\t\tVersion: 232
+\t}}
+}}
+Connections:  {{
+\tC: "OO",100000,200000
+}}
+"""
+    Path = __import__("pathlib").Path
+    Path(path).write_text(fbx, encoding="utf-8")
+
+
+_CURVE_SVG_COLORS = ("#FF6B6B", "#4ECDC4", "#45B7D1", "#FFA07A", "#98D8C8")
+
+
+def export_svg(result: ExtractResult, path: str) -> None:
+    w, h = result.img_w or 1024, result.img_h or 1024
+    parts = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d">' % (w, h, w, h),
+        '<rect width="100%" height="100%" fill="black"/>',
+    ]
+    for i, c in enumerate(result.curves):
+        color = _CURVE_SVG_COLORS[i % len(_CURVE_SVG_COLORS)]
+        d = "M " + " L ".join("%.1f %.1f" % (p[1], p[0]) for p in c.points_yx)
+        parts.append(
+            '<path d="%s" fill="none" stroke="%s" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" id="%s" name="%s"/>'
+            % (d, color, c.key, c.name)
+        )
+    parts.append("</svg>")
+    __import__("pathlib").Path(path).write_text("\n".join(parts), encoding="utf-8")
+
+
+def export_dxf(result: ExtractResult, path: str) -> None:
+    """HTML exportDXF: AC1009 POLYLINE + VERTEX."""
+    lines = [
+        "0", "SECTION", "2", "HEADER", "9", "$ACADVER", "1", "AC1009",
+        "0", "ENDSEC", "0", "SECTION", "2", "TABLES", "0", "TABLE", "2", "LAYER",
+        "70", str(len(result.curves)),
+    ]
+    for i, c in enumerate(result.curves):
+        lines += ["0", "LAYER", "2", c.key, "70", "0", "62", str((i + 1) % 256), "6", "CONTINUOUS"]
+    lines += ["0", "ENDTAB", "0", "ENDSEC", "0", "SECTION", "2", "ENTITIES"]
+    for c in result.curves:
+        pts = list(c.points_yx)
+        if len(pts) < 2:
+            continue
+        lines += ["0", "POLYLINE", "8", c.key, "66", "1", "70", "0", "10", "0.0", "20", "0.0", "30", "0.0"]
+        for p in pts:
+            lines += ["0", "VERTEX", "8", c.key, "10", "%.3f" % p[1], "20", "%.3f" % (-p[0]), "30", "0.0"]
+        lines += ["0", "SEQEND", "8", c.key]
+    lines += ["0", "ENDSEC", "0", "EOF"]
+    __import__("pathlib").Path(path).write_text("\n".join(lines), encoding="utf-8")
+
+
+def export_obj_lines(result: ExtractResult, path: str) -> None:
+    """HTML exportOBJ: 2D polylines as OBJ l, stacked in Z."""
+    lines = ["# Curve Extractor OBJ export"]
+    v_off = 1
+    n = len(result.curves)
+    for i, c in enumerate(result.curves):
+        z = (i - n / 2) * 0.5
+        pts = list(c.points_yx)
+        for p in pts:
+            lines.append("v %.3f %.3f %.3f" % (p[1], -p[0], z))
+        for j in range(len(pts) - 1):
+            lines.append("l %d %d" % (v_off + j, v_off + j + 1))
+        v_off += len(pts)
+    __import__("pathlib").Path(path).write_text("\n".join(lines), encoding="utf-8")
+
+
+def export_obj_cards(result: ExtractResult, path: str, scale: float = 0.01) -> None:
+    lines = ["# Curve Extractor cards"]
+    v_base = 1
+    for entry in result.curves:
+        for verts, faces, uvs in build_card_sheets(entry.points3d, result.card, scale=scale):
+            for x, y, z in verts:
+                lines.append("v %.6f %.6f %.6f" % (x, -y, z))
+            for u, v in uvs:
+                lines.append("vt %.6f %.6f" % (u, v))
+            for a, b, d, c in faces:
+                def idx(i):
+                    return "%d/%d" % (v_base + i, v_base + i)
+                lines.append("f %s %s %s %s" % (idx(a), idx(b), idx(d), idx(c)))
+            v_base += len(verts)
+    __import__("pathlib").Path(path).write_text("\n".join(lines), encoding="utf-8")
+

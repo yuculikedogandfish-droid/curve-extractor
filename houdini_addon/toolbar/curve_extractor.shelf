@@ -2,28 +2,74 @@
 <shelfDocument>
   <toolshelf name="curve_extractor" label="Curve Extractor">
     <memberTool name="ce_extract_image"/>
+    <memberTool name="ce_extract_tri"/>
+    <memberTool name="ce_pick_stroke"/>
     <memberTool name="ce_import_json"/>
     <memberTool name="ce_export_json"/>
+    <memberTool name="ce_export_fbx"/>
+    <memberTool name="ce_export_obj"/>
+    <memberTool name="ce_export_obj_lines"/>
+    <memberTool name="ce_export_svg"/>
+    <memberTool name="ce_export_dxf"/>
   </toolshelf>
   <tool name="ce_extract_image" label="从图片提取" icon="SOP_curve">
-    <helpText><![CDATA[从本地光效或线稿图提取曲线。内部工具，勿外传。]]></helpText>
     <script scriptType="python"><![CDATA[
 from curve_extractor import houdini_ops
 houdini_ops.extract_from_image_dialog()
 ]]></script>
   </tool>
+  <tool name="ce_extract_tri" label="三视图提取" icon="SOP_camera">
+    <script scriptType="python"><![CDATA[
+from curve_extractor import houdini_ops
+houdini_ops.extract_tri_dialog()
+]]></script>
+  </tool>
+  <tool name="ce_pick_stroke" label="点选补一笔" icon="SOP_group">
+    <script scriptType="python"><![CDATA[
+from curve_extractor import houdini_ops
+houdini_ops.pick_stroke_dialog()
+]]></script>
+  </tool>
   <tool name="ce_import_json" label="导入 JSON" icon="SOP_file">
-    <helpText><![CDATA[导入 Curve Extractor JSON。]]></helpText>
     <script scriptType="python"><![CDATA[
 from curve_extractor import houdini_ops
 houdini_ops.import_json_dialog()
 ]]></script>
   </tool>
   <tool name="ce_export_json" label="导出 JSON" icon="SOP_rop">
-    <helpText><![CDATA[把选中折线导出为内部 JSON。]]></helpText>
     <script scriptType="python"><![CDATA[
 from curve_extractor import houdini_ops
 houdini_ops.export_selected_json()
+]]></script>
+  </tool>
+  <tool name="ce_export_fbx" label="导出面片FBX" icon="SOP_file">
+    <script scriptType="python"><![CDATA[
+from curve_extractor import houdini_ops
+houdini_ops.export_fbx_dialog()
+]]></script>
+  </tool>
+  <tool name="ce_export_obj" label="导出面片OBJ" icon="SOP_file">
+    <script scriptType="python"><![CDATA[
+from curve_extractor import houdini_ops
+houdini_ops.export_obj_dialog()
+]]></script>
+  </tool>
+  <tool name="ce_export_obj_lines" label="导出线条OBJ" icon="SOP_file">
+    <script scriptType="python"><![CDATA[
+from curve_extractor import houdini_ops
+houdini_ops.export_obj_lines_dialog()
+]]></script>
+  </tool>
+  <tool name="ce_export_svg" label="导出SVG" icon="SOP_file">
+    <script scriptType="python"><![CDATA[
+from curve_extractor import houdini_ops
+houdini_ops.export_svg_dialog()
+]]></script>
+  </tool>
+  <tool name="ce_export_dxf" label="导出DXF" icon="SOP_file">
+    <script scriptType="python"><![CDATA[
+from curve_extractor import houdini_ops
+houdini_ops.export_dxf_dialog()
 ]]></script>
   </tool>
 </shelfDocument>

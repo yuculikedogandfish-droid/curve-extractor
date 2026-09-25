@@ -58,7 +58,7 @@ curve-extractor/
 
 **网页只改 `app.html`。** Blender 插件改 `blender_addon/` 与 `dcc_shared/core.py`。Houdini 改 `houdini_addon/`（核同样来自 `dcc_shared/core.py`）。其他是素材和归档。
 
-发给特效师用 **v1.4.26** 两个 zip（`release/`，不入库）：Blender 直接 Install zip；Houdini 解压后跑 `install.py`。插件里提曲线是本机单图，不要让同事走公开 Pages。
+发给特效师用 **v1.4.26** 两个 zip（`release/`，不入库）：Blender 直接 Install zip；Houdini 解压后跑 `install.py`。插件与网页同一套提取/三视图/补笔/导出，只是 UI 不同。改算法先改 `dcc_shared/core.py`，再 Copy-Item 进两个插件后打包。不要让同事走公开 Pages。
 
 ---
 
