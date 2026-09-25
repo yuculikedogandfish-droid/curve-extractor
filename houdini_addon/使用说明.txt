@@ -1,0 +1,34 @@
+Curve Extractor — Houdini 插件 v1.4.26
+======================================
+内部工具。仅限公司特效使用，禁止外传、禁止上传公网或公开仓库。
+图片和提取都在本机完成。
+
+支持 Houdini 19.5 / 20.0 / 20.5（需自带 numpy，官方包一般已有）。
+
+一、安装
+1. 解压整个文件夹到本机固定位置，例如 D:\tools\CurveExtractor-Houdini
+   （不要只留在下载目录的临时路径）
+2. 双击或在命令行运行：
+   python install.py
+   它会向 Documents\houdiniXX.X\packages\ 写入 curve_extractor.json
+3. 若没找到用户目录：把 packages\curve_extractor.json 拷到对应 packages 里，
+   并把 CURVE_EXTRACTOR 改成解压路径（正斜杠）
+4. 重启 Houdini
+5. 在 Shelf 栏右键 → New Shelf Tab，或从已有 shelf 里加载「Curve Extractor」
+   也可：Windows → Shelf → 找到 Curve Extractor
+
+二、从图片提取
+1. 点 Shelf「从图片提取」
+2. 选本地 PNG/JPG/TIF（推荐 PNG；无 Pillow 时请用 8 位 RGB/RGBA PNG）
+3. 填亮度、精细度、着生、轴向、缩放、面片数
+4. 结果在 /obj/ce_文件名 ，折线 + 交叉面片，Y-up（与 UE 一致）
+5. 默认缩放 0.01
+
+三、JSON
+- 「导入 JSON」：Blender 插件或内部工具导出的 curves.json
+- 「导出 JSON」：先选中带折线的 OBJ/SOP，再点按钮
+
+四、注意
+- 本版是单图提取。不要把制作图传到公开网页。
+- 横幅光带：走势轴向填小于 40。
+- 若提示找不到 curve_extractor：检查 packages json 路径后重启。

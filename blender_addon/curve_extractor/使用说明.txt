@@ -1,34 +1,37 @@
-Curve Extractor — Blender 插件 v1.4.25
-========================================
+Curve Extractor — Blender 插件 v1.4.26
+======================================
+内部工具。仅限公司特效使用，禁止外传、禁止上传公网或公开仓库。
+图片和提取结果都在本机完成，不要用外网网页上传制作素材。
 
-配合「Curve Extractor」网页工具使用：网页里提取曲线并导出 JSON，
-本插件在 Blender 里生成 3D 曲线和交叉面片。
-
-支持 Blender 3.3 / 3.6 / 4.x（Edit → Preferences → Add-ons → Install）。
+支持 Blender 3.3 / 3.6 / 4.x。
 
 一、安装
-1. 不要解压后只点 py 文件。请直接安装这个 zip。
-2. Blender → Edit → Preferences → Add-ons
-3. 右上角 Install…（4.2 起可能叫 Install from Disk）
-4. 选中 CurveExtractor-v1.4.25-Blender.zip
+1. 不要只双击 py。请安装这个 zip。
+2. Edit → Preferences → Add-ons
+3. Install…（4.2 起可能叫 Install from Disk）
+4. 选中 CurveExtractor-v1.4.26-Blender.zip
 5. 勾选启用「Curve Extractor」
-6. 3D 视图按 N 打开侧栏，找到标签「Curve Extractor」
+6. 3D 视图按 N，打开侧栏「Curve Extractor」
 
-二、使用
-1. 同事用 HTML 工具提取曲线后，点「JSON」，得到 curves.json
-   （请用带 3D 的新版 HTML；旧 JSON 只有平面点）
-2. 在本面板点「导入 Curve Extractor JSON」
-3. 文件对话框里：
-   - 缩放：默认 0.01（约 1024 像素 = 10.24 米）
-   - Blender Z-up：默认勾选（Blender 常用）。取消则与 UE/OBJ 的 Y-up 一致
-   - 可选择是否生成曲线 / 交叉面片
-4. 导入后物体在集合 CurveExtractor 里
-5. 改面片数量、半宽、夹角后，选中曲线，点「从选中曲线生成面片」可重生成
+二、从图片提取（推荐，不经过网页）
+1. 点「从图片提取曲线」，选本地光效图或白线黑底线稿
+2. 可先调：亮度阈值、枝条精细度、分叉着生、走势轴向
+   - 精细度：少=主干，多=短枝
+   - 着生：少=可悬空，多=贴主枝
+   - 轴向：往左=横向环绕光带，往右=竖向根系，中间按长宽自动
+3. 物体在集合 CurveExtractor 里
+4. 默认缩放 0.01（约 1024 像素 = 10.24 米），Blender Z-up
 
-三、给 UE 的面片
-请用 HTML 工具直接导出「面片 FBX」，不要用本插件的网格当 UE 资产源。
-本插件面向 Blender 里修曲线、看交叉片、继续做特效。
+三、JSON
+- 「导入 JSON」：同事或本插件导出的 curves.json
+- 「导出选中曲线为 JSON」：可给 Houdini 插件接着用
+- 旧网页 JSON（带 points3d）也能导
 
-四、坐标
-网页世界：x 向右，y 图像向下，z 深度（侧面）
-导入默认转成 Blender Z-up：(x, z, -y)
+四、面片
+改数量 / 半宽 / 夹角后，选中曲线，点「从选中曲线生成面片」。
+给 UE 的资产请在 DCC 里导出 FBX/Alembic，不要把插件源码一并外发。
+
+五、注意
+- 本版在 DCC 内做单图提取。三视图请走内部流程，不要把图传到公开 Pages。
+- 横幅被截成段：走势轴向往左。
+- 等级按原图颜色分组，不按粗细。

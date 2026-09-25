@@ -1,0 +1,22 @@
+{
+  "load_package_once": true,
+  "enable": true,
+  "comment": "Run install.py after unzip so CURVE_EXTRACTOR points at this folder.",
+  "env": [
+    {
+      "CURVE_EXTRACTOR": "REPLACE_WITH_UNZIP_PATH"
+    },
+    {
+      "PYTHONPATH": {
+        "method": "prepend",
+        "value": "$CURVE_EXTRACTOR/python"
+      }
+    },
+    {
+      "HOUDINI_TOOLBAR_PATH": {
+        "method": "prepend",
+        "value": "$CURVE_EXTRACTOR/toolbar"
+      }
+    }
+  ]
+}

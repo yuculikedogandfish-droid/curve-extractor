@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<shelfDocument>
+  <toolshelf name="curve_extractor" label="Curve Extractor">
+    <memberTool name="ce_extract_image"/>
+    <memberTool name="ce_import_json"/>
+    <memberTool name="ce_export_json"/>
+  </toolshelf>
+  <tool name="ce_extract_image" label="从图片提取" icon="SOP_curve">
+    <helpText><![CDATA[从本地光效或线稿图提取曲线。内部工具，勿外传。]]></helpText>
+    <script scriptType="python"><![CDATA[
+from curve_extractor import houdini_ops
+houdini_ops.extract_from_image_dialog()
+]]></script>
+  </tool>
+  <tool name="ce_import_json" label="导入 JSON" icon="SOP_file">
+    <helpText><![CDATA[导入 Curve Extractor JSON。]]></helpText>
+    <script scriptType="python"><![CDATA[
+from curve_extractor import houdini_ops
+houdini_ops.import_json_dialog()
+]]></script>
+  </tool>
+  <tool name="ce_export_json" label="导出 JSON" icon="SOP_rop">
+    <helpText><![CDATA[把选中折线导出为内部 JSON。]]></helpText>
+    <script scriptType="python"><![CDATA[
+from curve_extractor import houdini_ops
+houdini_ops.export_selected_json()
+]]></script>
+  </tool>
+</shelfDocument>
